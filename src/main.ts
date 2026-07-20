@@ -32,6 +32,7 @@ const els = {
   overflow: $<HTMLElement>("overflow"),
   meter: $<HTMLElement>("meter"),
   rows: $<HTMLTableSectionElement>("rows"),
+  clear: $<HTMLButtonElement>("clear"),
   log: $<HTMLElement>("log"),
   wfwrap: $<HTMLElement>("wfwrap"),
   cmdline: $<HTMLElement>("cmdline"),
@@ -176,6 +177,15 @@ function addPacket(protocol: string, text: string, timeMs: number) {
   while (els.rows.children.length > 300) els.rows.lastElementChild?.remove();
   packetCount++;
   els.count.textContent = String(packetCount);
+}
+
+const EMPTY_ROW =
+  '<tr><td colspan="3" class="empty">No packets yet. Pair an RTL-SDR, press Start, tune to a pager channel, and wait for traffic.</td></tr>';
+
+function clearPackets() {
+  els.rows.innerHTML = EMPTY_ROW;
+  packetCount = 0;
+  els.count.textContent = "0";
 }
 
 function escapeHtml(s: string): string {
@@ -395,6 +405,7 @@ waterfall.onHover = (hz) => {
 els.pair.addEventListener("click", pair);
 els.start.addEventListener("click", startStream);
 els.stop.addEventListener("click", stopStream);
+els.clear.addEventListener("click", clearPackets);
 els.freq.addEventListener("input", onFreqChange);
 els.bw.addEventListener("input", onBandwidthChange);
 els.fft.addEventListener("change", () => streaming && restartDecoder());

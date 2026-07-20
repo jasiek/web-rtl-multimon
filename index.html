@@ -85,6 +85,7 @@
       .cmd code .pipe { color: var(--muted); }
       .cmd button { padding: 4px 12px; font-size: 12px; }
       .stats { display: flex; gap: 24px; margin: 14px 2px; color: var(--muted); font-size: 13px; align-items: center; }
+      .stats #clear { margin-left: auto; padding: 5px 12px; font-size: 12px; }
       .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
       .meter { width: 120px; height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
       .meter > i { display: block; height: 100%; width: 0; background: var(--accent); }
@@ -217,6 +218,7 @@
         <div>Packets: <b id="count">0</b></div>
         <div>Dropped: <b id="overflow">0</b></div>
         <div>Audio <span class="meter"><i id="meter"></i></span></div>
+        <button id="clear" class="secondary">Clear packets</button>
       </div>
 
       <table>
@@ -224,7 +226,7 @@
           <tr><th style="width:110px">Time</th><th style="width:120px">Protocol</th><th>Message</th></tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="3" class="empty">No packets yet. Connect an RTL-SDR, tune to a pager channel, and wait for traffic.</td></tr>
+          <tr><td colspan="3" class="empty">No packets yet. Pair an RTL-SDR, press Start, tune to a pager channel, and wait for traffic.</td></tr>
         </tbody>
       </table>
 
