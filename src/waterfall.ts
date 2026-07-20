@@ -67,10 +67,15 @@ export class Waterfall {
   private panning = false;
   private panStartX = 0;
   private panStartCenter = 0.5;
+  // Left-button tune-drag state.
+  private tuning = false;
 
   private renderScheduled = false;
 
+  /** Fired (repeatedly, live) when the decode channel is set/dragged. */
   onTune: ((offsetHz: number) => void) | undefined;
+  /** Fired as the cursor moves over the waterfall (Hz), or null on leave. */
+  onHover: ((hz: number | null) => void) | undefined;
 
   constructor(wrapper: HTMLElement) {
     this.wf = document.createElement("canvas");
@@ -91,6 +96,7 @@ export class Waterfall {
     this.overlay.addEventListener("pointermove", (e) => this.onPointerMove(e));
     this.overlay.addEventListener("pointerup", (e) => this.onPointerUp(e));
     this.overlay.addEventListener("pointercancel", (e) => this.onPointerUp(e));
+    this.overlay.addEventListener("pointerleave", () => this.onHover?.(null));
     this.overlay.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     // Suppress the browser's middle-click autoscroll / paste.
     this.overlay.addEventListener("auxclick", (e) => e.preventDefault());
@@ -307,6 +313,20 @@ export class Waterfall {
     this.scheduleRender();
   }
 
+  /** Frequency at a canvas x, clamped to the tuned span. */
+  private freqForX(x: number): number {
+    const f = Math.min(1, Math.max(0, this.fractionForX(x)));
+    return this.freqForFraction(f);
+  }
+
+  /** Set the decode channel from a canvas x (used on left click and drag). */
+  private tuneToX(x: number): void {
+    const f = Math.min(1, Math.max(0, this.fractionForX(x)));
+    const offset = (f - 0.5) * this.sampleRate;
+    this.setOffset(offset);
+    this.onTune?.(offset);
+  }
+
   private onPointerDown(e: PointerEvent): void {
     if (e.button === 1) {
       // Middle button: start panning.
@@ -317,25 +337,36 @@ export class Waterfall {
       this.overlay.setPointerCapture(e.pointerId);
       this.overlay.style.cursor = "grabbing";
     } else if (e.button === 0) {
-      // Left button: tune the decode channel.
-      const offset = (this.fractionForX(this.localX(e)) - 0.5) * this.sampleRate;
-      this.setOffset(offset);
-      this.onTune?.(offset);
+      // Left button: tune, and keep tuning while dragged.
+      this.tuning = true;
+      this.overlay.setPointerCapture(e.pointerId);
+      this.tuneToX(this.localX(e));
     }
   }
 
   private onPointerMove(e: PointerEvent): void {
-    if (!this.panning) return;
-    const dx = this.localX(e) - this.panStartX;
-    const deltaFrac = -(dx / this.width) * this.viewWidth();
-    this.centerFrac = this.clampCenter(this.panStartCenter + deltaFrac);
-    this.scheduleRender();
+    const x = this.localX(e);
+    if (this.panning) {
+      const dx = x - this.panStartX;
+      const deltaFrac = -(dx / this.width) * this.viewWidth();
+      this.centerFrac = this.clampCenter(this.panStartCenter + deltaFrac);
+      this.scheduleRender();
+      return;
+    }
+    if (this.tuning) {
+      this.tuneToX(x);
+      return;
+    }
+    // Idle hover: report the frequency under the cursor.
+    this.onHover?.(this.freqForX(x));
   }
 
   private onPointerUp(e: PointerEvent): void {
-    if (!this.panning) return;
-    this.panning = false;
+    if (this.panning) {
+      this.panning = false;
+      this.overlay.style.cursor = "crosshair";
+    }
+    this.tuning = false;
     this.overlay.releasePointerCapture?.(e.pointerId);
-    this.overlay.style.cursor = "crosshair";
   }
 }

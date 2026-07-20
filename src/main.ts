@@ -27,7 +27,8 @@ const els = {
   dot: $<HTMLSpanElement>("dot"),
   statusText: $<HTMLSpanElement>("statusText"),
   count: $<HTMLElement>("count"),
-  chan: $<HTMLElement>("chan"),
+  selFreq: $<HTMLElement>("selFreq"),
+  curFreq: $<HTMLElement>("curFreq"),
   overflow: $<HTMLElement>("overflow"),
   meter: $<HTMLElement>("meter"),
   rows: $<HTMLTableSectionElement>("rows"),
@@ -120,8 +121,12 @@ function dspParams(sampleRate: number): StartParams {
   };
 }
 
+function fmtMHz(hz: number): string {
+  return `${(hz / 1e6).toFixed(4)} MHz`;
+}
+
 function updateChannelReadout() {
-  els.chan.textContent = active ? `${((active.centerFrequency + offsetHz) / 1e6).toFixed(4)} MHz` : "—";
+  els.selFreq.textContent = active ? fmtMHz(active.centerFrequency + offsetHz) : "—";
 }
 
 // --- packet rendering --------------------------------------------------------
@@ -343,6 +348,11 @@ waterfall.onTune = (hz) => {
   offsetHz = hz;
   if (streaming) post({ type: "tune", offsetHz });
   updateChannelReadout();
+};
+
+// Live frequency under the cursor (meaningful once tuned, i.e. streaming).
+waterfall.onHover = (hz) => {
+  els.curFreq.textContent = hz == null || !active ? "—" : fmtMHz(hz);
 };
 
 els.pair.addEventListener("click", pair);

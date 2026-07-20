@@ -63,8 +63,16 @@
       .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
       .check input { accent-color: var(--accent); }
 
+      .wfreadout {
+        display: flex; align-items: baseline; gap: 24px; margin: 10px 2px 6px;
+        font: 13px var(--mono); color: var(--muted);
+      }
+      .wfreadout .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+      .wfreadout b { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .wfreadout .sel b { color: var(--accent); }
+      .wfreadout .cur b { color: var(--text); }
       .wfwrap {
-        position: relative; width: 100%; height: 340px; margin: 6px 0 4px;
+        position: relative; width: 100%; height: 340px; margin: 0 0 4px;
         background: #05060a; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
       }
       .wfhint { color: var(--muted); font-size: 12px; margin: 0 2px 14px; }
@@ -183,12 +191,15 @@
         </div>
       </div>
 
+      <div class="wfreadout">
+        <span class="sel"><span class="lbl">Selected</span> <b id="selFreq">—</b></span>
+        <span class="cur"><span class="lbl">Cursor</span> <b id="curFreq">—</b></span>
+      </div>
       <div class="wfwrap" id="wfwrap"></div>
       <p class="wfhint">Left-click to tune the decode channel (green marker); the band shows the channel width. Scroll to zoom (centered on the cursor), middle-button drag to pan.</p>
 
       <div class="stats">
         <div>Packets: <b id="count">0</b></div>
-        <div>Channel: <b id="chan">&mdash;</b></div>
         <div>Dropped: <b id="overflow">0</b></div>
         <div>Audio <span class="meter"><i id="meter"></i></span></div>
       </div>
