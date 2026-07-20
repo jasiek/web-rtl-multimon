@@ -34,6 +34,8 @@ const els = {
   rows: $<HTMLTableSectionElement>("rows"),
   log: $<HTMLElement>("log"),
   wfwrap: $<HTMLElement>("wfwrap"),
+  cmdline: $<HTMLElement>("cmdline"),
+  copyCmd: $<HTMLButtonElement>("copyCmd"),
   unsupported: $<HTMLElement>("unsupported"),
 };
 
@@ -127,6 +129,37 @@ function fmtMHz(hz: number): string {
 
 function updateChannelReadout() {
   els.selFreq.textContent = active ? fmtMHz(active.centerFrequency + offsetHz) : "—";
+  updateCommand();
+}
+
+// The concrete channel the user has selected: SDR center (once streaming) or
+// the frequency field, plus the waterfall offset.
+function selectedHz(): number {
+  const center = active ? active.centerFrequency : Math.round(parseFloat(els.freq.value) * 1e6);
+  return center + offsetHz;
+}
+
+// The native `rtl_fm | multimon-ng` pipeline equivalent to the current settings.
+// rtl_fm tunes straight to the selected channel and FM-demodulates it to 22050
+// Hz audio — exactly what the in-browser channelizer does — so it uses the
+// selected frequency (not the wide waterfall span) and -s 22050.
+function buildCommand(): { plain: string; html: string } {
+  const fMHz = (selectedHz() / 1e6).toFixed(4);
+  const gain = els.gain.value === "auto" ? "" : ` -g ${parseFloat(els.gain.value)}`;
+  const demods = selectedDemods();
+  const aflags = (demods.length ? demods : ["POCSAG1200"]).map((d) => `-a ${d}`).join(" ");
+  const plain =
+    `rtl_fm -f ${fMHz}M -M fm -s ${AUDIO_RATE}${gain} - | ` +
+    `multimon-ng -t raw ${aflags} -`;
+  // A lightly highlighted version for display.
+  const html = escapeHtml(plain)
+    .replace(/(-[a-zA-Z])\b/g, '<span class="flag">$1</span>')
+    .replace(/ \| /g, ' <span class="pipe">|</span> ');
+  return { plain, html };
+}
+
+function updateCommand() {
+  els.cmdline.innerHTML = buildCommand().html;
 }
 
 // --- packet rendering --------------------------------------------------------
@@ -323,6 +356,7 @@ function restartDecoder() {
 
 // --- parameter change handlers (auto-apply) ---------------------------------
 const onFreqChange = debounce(() => {
+  updateCommand(); // reflect the typed frequency even before streaming
   if (!streaming || !active) return;
   const freq = Math.round(parseFloat(els.freq.value) * 1e6);
   if (!Number.isFinite(freq)) return;
@@ -341,7 +375,10 @@ const onBandwidthChange = debounce(() => {
   if (streaming) restartDecoder();
 }, 350);
 
-const onDemodChange = debounce(() => restartDecoder(), 250);
+const onDemodChange = debounce(() => {
+  updateCommand();
+  restartDecoder();
+}, 250);
 
 // --- init --------------------------------------------------------------------
 waterfall.onTune = (hz) => {
@@ -362,7 +399,20 @@ els.freq.addEventListener("input", onFreqChange);
 els.bw.addEventListener("input", onBandwidthChange);
 els.fft.addEventListener("change", () => streaming && restartDecoder());
 els.rate.addEventListener("change", () => streaming && restartStream());
-els.gain.addEventListener("change", () => streaming && restartStream());
+els.gain.addEventListener("change", () => {
+  updateCommand();
+  if (streaming) restartStream();
+});
+els.copyCmd.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(buildCommand().plain);
+    const prev = els.copyCmd.textContent;
+    els.copyCmd.textContent = "Copied";
+    setTimeout(() => (els.copyCmd.textContent = prev), 1200);
+  } catch {
+    logLine("copy failed — select the command text manually");
+  }
+});
 document
   .querySelectorAll<HTMLInputElement>('.demods input[type="checkbox"]')
   .forEach((c) => c.addEventListener("change", onDemodChange));
@@ -383,3 +433,4 @@ if (support) {
   });
 }
 updateButtons();
+updateCommand();

@@ -77,6 +77,13 @@
       }
       .wfhint { color: var(--muted); font-size: 12px; margin: 0 2px 14px; }
 
+      .cmd { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 4px 0 14px; }
+      .cmd .cmdhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+      .cmd .cmdhead span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+      .cmd code { display: block; font: 12px/1.6 var(--mono); color: var(--text); white-space: pre-wrap; word-break: break-all; }
+      .cmd code .flag { color: var(--accent); }
+      .cmd code .pipe { color: var(--muted); }
+      .cmd button { padding: 4px 12px; font-size: 12px; }
       .stats { display: flex; gap: 24px; margin: 14px 2px; color: var(--muted); font-size: 13px; align-items: center; }
       .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
       .meter { width: 120px; height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
@@ -197,6 +204,14 @@
       </div>
       <div class="wfwrap" id="wfwrap"></div>
       <p class="wfhint">Left-click to tune the decode channel (green marker); the band shows the channel width. Scroll to zoom (centered on the cursor), middle-button drag to pan.</p>
+
+      <div class="cmd">
+        <div class="cmdhead">
+          <span>Equivalent native command (rtl_fm &rarr; multimon-ng)</span>
+          <button id="copyCmd" class="secondary">Copy</button>
+        </div>
+        <code id="cmdline"></code>
+      </div>
 
       <div class="stats">
         <div>Packets: <b id="count">0</b></div>
