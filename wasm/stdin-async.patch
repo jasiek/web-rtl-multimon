@@ -1,0 +1,42 @@
+diff --git a/unixinput.c b/unixinput.c
+index 74bd1a4..a56741c 100644
+--- a/unixinput.c
++++ b/unixinput.c
+@@ -44,6 +44,21 @@
+ #include <time.h>
+ #include <getopt.h>
+ 
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++// Browser live-stream stdin: instead of a blocking read() on fd 0, pull signed
++// 16-bit PCM audio bytes from the host page's audio queue and suspend the wasm
++// (via JSPI) until data is available. Module.multimonReadStdin(len) resolves to
++// a Uint8Array of up to `len` bytes; an empty array means EOF, which stops the
++// decode loop cleanly. See src/worker/multimon.ts on the JS side.
++EM_ASYNC_JS(long, multimon_host_read, (unsigned char *buf, unsigned long len), {
++    const chunk = await Module["multimonReadStdin"](len);
++    if (!chunk || chunk.length === 0) return 0;
++    HEAPU8.set(chunk, buf);
++    return chunk.length;
++});
++#endif
++
+ /* Compatibility shim for C11 timespec_get()
+  *
+  * timespec_get() is a C11 function not universally available:
+@@ -895,7 +910,14 @@ static void input_file(unsigned int sample_rate, unsigned int overlap,
+      * demodulate
+      */
+     for (;;) {
+-        i = read(fd, sp = buffer, sizeof(buffer));
++        sp = buffer;
++#ifdef __EMSCRIPTEN__
++        // Live browser stream on stdin: async, suspending host read (JSPI).
++        if (fd == 0)
++            i = (int) multimon_host_read((unsigned char *) buffer, sizeof(buffer));
++        else
++#endif
++        i = read(fd, buffer, sizeof(buffer));
+         if (i < 0 && errno != EAGAIN) {
+             perror("read");
+             exit(4);

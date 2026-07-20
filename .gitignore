@@ -1,0 +1,10 @@
+node_modules/
+dist/
+wasm/build/
+# Emscripten build artifacts (regenerate with `npm run build:wasm`)
+public/multimon.js
+public/multimon.wasm
+
+# Diagnostic captures
+capture_*.cu8
+audio_*.s16

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>web-rtl-multimon &mdash; decode pagers &amp; tones in the browser</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #171a21;
+        --border: #272b35;
+        --text: #e6e8ec;
+        --muted: #8b909c;
+        --accent: #4ade80;
+        --accent-dim: #1f3d2c;
+        --danger: #f87171;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 system-ui, -apple-system, sans-serif;
+      }
+      header {
+        display: flex; align-items: baseline; gap: 12px;
+        padding: 16px 20px; border-bottom: 1px solid var(--border);
+      }
+      header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+      header .sub { color: var(--muted); font-size: 12px; }
+      header a { color: var(--accent); text-decoration: none; }
+      header .gh { margin-left: auto; align-self: center; color: var(--muted); font-size: 13px; }
+      header .gh:hover { color: var(--text); }
+      main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+      .controls {
+        display: flex; flex-wrap: wrap; align-items: end; gap: 12px;
+        background: var(--panel); border: 1px solid var(--border);
+        border-radius: 10px; padding: 16px;
+      }
+      .field { display: flex; flex-direction: column; gap: 4px; }
+      .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+      input[type="number"], select {
+        background: var(--bg); border: 1px solid var(--border); color: var(--text);
+        border-radius: 6px; padding: 8px 10px; font: 13px var(--mono); width: 130px;
+      }
+      select { cursor: pointer; width: 150px; }
+      button {
+        background: var(--accent); color: #06210f; border: none; border-radius: 6px;
+        padding: 9px 16px; font-weight: 600; font-size: 13px; cursor: pointer;
+      }
+      button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+      button:disabled { opacity: .4; cursor: not-allowed; }
+      .status { display: inline-flex; align-items: center; gap: 7px; margin-left: auto; font-size: 13px; color: var(--muted); }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+      .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+      .dot.err { background: var(--danger); }
+
+      .demods { margin: 14px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+      .demods h2 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 10px; font-weight: 600; }
+      .demods .group { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
+      .demods .group .gl { color: var(--muted); font-size: 11px; width: 74px; flex: none; align-self: center; }
+      .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
+      .check input { accent-color: var(--accent); }
+
+      .wfwrap {
+        position: relative; width: 100%; height: 340px; margin: 6px 0 4px;
+        background: #05060a; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+      }
+      .wfhint { color: var(--muted); font-size: 12px; margin: 0 2px 14px; }
+
+      .stats { display: flex; gap: 24px; margin: 14px 2px; color: var(--muted); font-size: 13px; align-items: center; }
+      .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+      .meter { width: 120px; height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+      .meter > i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+      th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 500; }
+      td { font: 13px var(--mono); vertical-align: top; }
+      td.proto { color: var(--accent); white-space: nowrap; }
+      td.msg { color: var(--text); word-break: break-word; }
+      tr.flash { animation: flash .8s ease-out; }
+      @keyframes flash { from { background: var(--accent-dim); } to { background: transparent; } }
+      .empty { color: var(--muted); padding: 40px; text-align: center; }
+      .banner { background: #2a1d10; border: 1px solid #5a3d1a; color: #f0c98a; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+      #log {
+        margin-top: 20px; max-height: 140px; overflow: auto; font: 11px var(--mono); color: var(--muted);
+        background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>web-rtl-multimon</h1>
+      <span class="sub">
+        tune an RTL-SDR, pick a channel off the waterfall, decode POCSAG / FLEX / AFSK &mdash; powered by
+        <a href="https://github.com/EliasOenal/multimon-ng" target="_blank" rel="noreferrer">multimon-ng</a> in WebAssembly
+      </span>
+      <a class="gh" href="https://github.com/jasiek/web-rtl-multimon" target="_blank" rel="noreferrer">GitHub</a>
+    </header>
+    <main>
+      <div id="unsupported" class="banner" hidden></div>
+
+      <div class="controls">
+        <div class="field">
+          <label for="freq">Center frequency (MHz)</label>
+          <input id="freq" type="number" value="153.350" step="0.0125" min="24" max="1766" />
+        </div>
+        <div class="field">
+          <label for="rate">Sample rate (span)</label>
+          <select id="rate">
+            <option value="1058400" selected>1.058 MHz</option>
+            <option value="1014300">1.014 MHz</option>
+            <option value="970200">0.970 MHz</option>
+            <option value="1102500">1.102 MHz</option>
+            <option value="264600">0.265 MHz (narrow)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gain">Tuner gain</label>
+          <select id="gain">
+            <option value="auto" selected>Auto (AGC)</option>
+            <option value="49.6">49.6 dB (max)</option>
+            <option value="44.5">44.5 dB</option>
+            <option value="40.2">40.2 dB</option>
+            <option value="33.8">33.8 dB</option>
+            <option value="28.0">28.0 dB</option>
+            <option value="22.9">22.9 dB</option>
+            <option value="15.7">15.7 dB</option>
+            <option value="8.7">8.7 dB</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="bw">Channel width (kHz)</label>
+          <input id="bw" type="number" value="7.5" step="0.5" min="2.5" max="20" />
+        </div>
+        <div class="field">
+          <label for="fft">FFT size</label>
+          <select id="fft">
+            <option value="1024">1024</option>
+            <option value="2048" selected>2048</option>
+            <option value="4096">4096</option>
+          </select>
+        </div>
+        <button id="connect">Connect SDR</button>
+        <button id="apply" class="secondary" disabled title="Restart the decoders with the current channel width / FFT / demodulator selection">Apply DSP</button>
+        <button id="stop" class="secondary" disabled>Stop</button>
+        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Idle</span></span>
+      </div>
+
+      <div class="demods">
+        <h2>Demodulators</h2>
+        <div class="group"><span class="gl">Pagers</span>
+          <label class="check"><input type="checkbox" value="POCSAG512" checked /> POCSAG512</label>
+          <label class="check"><input type="checkbox" value="POCSAG1200" checked /> POCSAG1200</label>
+          <label class="check"><input type="checkbox" value="POCSAG2400" checked /> POCSAG2400</label>
+          <label class="check"><input type="checkbox" value="FLEX" checked /> FLEX</label>
+          <label class="check"><input type="checkbox" value="FLEX_NEXT" /> FLEX_NEXT</label>
+          <label class="check"><input type="checkbox" value="GSC" /> GSC</label>
+        </div>
+        <div class="group"><span class="gl">Data / ham</span>
+          <label class="check"><input type="checkbox" value="AFSK1200" /> AFSK1200</label>
+          <label class="check"><input type="checkbox" value="AFSK2400" /> AFSK2400</label>
+          <label class="check"><input type="checkbox" value="UFSK1200" /> UFSK1200</label>
+          <label class="check"><input type="checkbox" value="HAPN4800" /> HAPN4800</label>
+          <label class="check"><input type="checkbox" value="FSK9600" /> FSK9600</label>
+          <label class="check"><input type="checkbox" value="FMSFSK" /> FMSFSK</label>
+        </div>
+        <div class="group"><span class="gl">Selcall / tones</span>
+          <label class="check"><input type="checkbox" value="DTMF" /> DTMF</label>
+          <label class="check"><input type="checkbox" value="ZVEI1" /> ZVEI1</label>
+          <label class="check"><input type="checkbox" value="ZVEI2" /> ZVEI2</label>
+          <label class="check"><input type="checkbox" value="CCIR" /> CCIR</label>
+          <label class="check"><input type="checkbox" value="EEA" /> EEA</label>
+          <label class="check"><input type="checkbox" value="EIA" /> EIA</label>
+        </div>
+        <div class="group"><span class="gl">Other</span>
+          <label class="check"><input type="checkbox" value="EAS" /> EAS</label>
+          <label class="check"><input type="checkbox" value="MORSE_CW" /> MORSE_CW</label>
+          <label class="check"><input type="checkbox" value="X10" /> X10</label>
+          <label class="check"><input type="checkbox" value="CLIPFSK" /> CLIPFSK</label>
+        </div>
+      </div>
+
+      <div class="wfwrap" id="wfwrap"></div>
+      <p class="wfhint">Click anywhere on the waterfall to tune the decode channel (green marker). The band shows the channel width.</p>
+
+      <div class="stats">
+        <div>Packets: <b id="count">0</b></div>
+        <div>Channel: <b id="chan">&mdash;</b></div>
+        <div>Dropped: <b id="overflow">0</b></div>
+        <div>Audio <span class="meter"><i id="meter"></i></span></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th style="width:110px">Time</th><th style="width:120px">Protocol</th><th>Message</th></tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="3" class="empty">No packets yet. Connect an RTL-SDR, tune to a pager channel, and wait for traffic.</td></tr>
+        </tbody>
+      </table>
+
+      <div id="log"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
