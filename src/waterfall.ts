@@ -1,20 +1,23 @@
-// Scrolling waterfall display with click-to-tune.
+// Scrolling waterfall display with click-to-tune, mouse-wheel zoom and
+// middle-button drag-to-pan.
 //
 // Two stacked canvases share a wrapper:
 //   • the spectrogram canvas scrolls down one row per FFT column;
 //   • a transparent overlay canvas on top carries the channel marker, the
-//     channel-width band, and the frequency axis — redrawn on demand so they
-//     don't scroll away with the spectrogram.
+//     channel-width band, the frequency axis and the zoom readout — redrawn on
+//     demand so they don't scroll away with the spectrogram.
 //
-// The x axis maps linearly across the tuned span: the left edge is
-// centerHz − sampleRate/2, the middle is centerHz, the right edge is
-// centerHz + sampleRate/2. A click sets the channel offset from center and
-// fires onTune(offsetHz).
+// A ring of recent magnitude columns is kept so that zooming/panning can
+// re-render the whole visible history at the new mapping (not just new rows).
+//
+// The x axis maps a *fraction* f ∈ [0,1] of the full tuned span to a frequency
+// (f=0 → centerHz − sampleRate/2, f=1 → centerHz + sampleRate/2). The visible
+// window is a sub-range of that fraction determined by `zoom` (≥1) and the view
+// center; a click sets the channel offset and fires onTune(offsetHz).
 
 /** Map a normalized value 0..1 to an inferno-ish [r,g,b]. */
 function colormap(t: number): [number, number, number] {
   const x = t < 0 ? 0 : t > 1 ? 1 : t;
-  // Cheap 4-stop ramp: black -> purple -> orange -> yellow-white.
   const stops: [number, number, number, number][] = [
     [0.0, 0, 0, 4],
     [0.35, 90, 20, 110],
@@ -33,6 +36,9 @@ function colormap(t: number): [number, number, number] {
 }
 
 const DYN_RANGE_DB = 55; // color span above the tracked noise floor
+const MAX_ZOOM = 128;
+const WHEEL_STEP = 1.25;
+const BG: [number, number, number] = [5, 6, 10];
 
 export class Waterfall {
   private readonly wf: HTMLCanvasElement;
@@ -49,6 +55,21 @@ export class Waterfall {
   private bandwidthHz = 12_500;
   private noiseFloor = -60; // adaptive, dB
 
+  // Recent magnitude columns, newest first (cols[0] is the top row).
+  private cols: Float32Array[] = [];
+
+  // View: `zoom` ≥ 1 shrinks the visible span to 1/zoom of the full span;
+  // `centerFrac` ∈ [0,1] is the fraction at the middle of the view.
+  private zoom = 1;
+  private centerFrac = 0.5;
+
+  // Middle-button pan state.
+  private panning = false;
+  private panStartX = 0;
+  private panStartCenter = 0.5;
+
+  private renderScheduled = false;
+
   onTune: ((offsetHz: number) => void) | undefined;
 
   constructor(wrapper: HTMLElement) {
@@ -62,10 +83,18 @@ export class Waterfall {
       wrapper.appendChild(c);
     }
     this.overlay.style.cursor = "crosshair";
+    this.overlay.style.touchAction = "none";
     this.wfCtx = this.wf.getContext("2d", { alpha: false })!;
     this.ovCtx = this.overlay.getContext("2d")!;
 
-    this.overlay.addEventListener("pointerdown", (e) => this.onClick(e));
+    this.overlay.addEventListener("pointerdown", (e) => this.onPointerDown(e));
+    this.overlay.addEventListener("pointermove", (e) => this.onPointerMove(e));
+    this.overlay.addEventListener("pointerup", (e) => this.onPointerUp(e));
+    this.overlay.addEventListener("pointercancel", (e) => this.onPointerUp(e));
+    this.overlay.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    // Suppress the browser's middle-click autoscroll / paste.
+    this.overlay.addEventListener("auxclick", (e) => e.preventDefault());
+
     const ro = new ResizeObserver(() => this.resize());
     ro.observe(wrapper);
     this.resize();
@@ -76,18 +105,15 @@ export class Waterfall {
     const w = Math.max(1, Math.floor(rect.width));
     const h = Math.max(1, Math.floor(rect.height));
     if (w === this.width && h === this.height) return;
-    // Preserve existing spectrogram content across a resize.
-    const prev = this.width && this.height ? this.wfCtx.getImageData(0, 0, this.width, this.height) : null;
     this.width = w;
     this.height = h;
     for (const c of [this.wf, this.overlay]) {
       c.width = w;
       c.height = h;
     }
-    this.wfCtx.fillStyle = "#05060a";
-    this.wfCtx.fillRect(0, 0, w, h);
-    if (prev) this.wfCtx.putImageData(prev, 0, 0);
+    if (this.cols.length > h) this.cols.length = h;
     this.row = this.wfCtx.createImageData(w, 1);
+    this.renderAll();
     this.drawOverlay();
   }
 
@@ -107,60 +133,120 @@ export class Waterfall {
     this.drawOverlay();
   }
 
+  // --- view geometry ---------------------------------------------------------
+  private viewWidth(): number {
+    return 1 / this.zoom;
+  }
+
+  /** Clamp the view center so the window stays within [0,1]. */
+  private clampCenter(c: number): number {
+    const half = this.viewWidth() / 2;
+    return Math.min(1 - half, Math.max(half, c));
+  }
+
+  private viewLo(): number {
+    return this.centerFrac - this.viewWidth() / 2;
+  }
+
+  private fractionForX(x: number): number {
+    return this.viewLo() + (x / this.width) * this.viewWidth();
+  }
+
+  private xForFraction(f: number): number {
+    return ((f - this.viewLo()) / this.viewWidth()) * this.width;
+  }
+
+  private freqForFraction(f: number): number {
+    return this.centerHz + (f - 0.5) * this.sampleRate;
+  }
+
+  // --- data ------------------------------------------------------------------
   /** Push one FFT column (dB magnitudes, DC-centered) as the new top row. */
   pushColumn(mags: Float32Array): void {
     const w = this.width;
     const h = this.height;
     if (w < 1 || h < 1) return;
 
-    // Track the noise floor from this column's minimum (fast attack up on quiet,
-    // slow release), so the color scale follows the actual signal level.
+    // Track the noise floor from this column's minimum (fast attack, slow
+    // release) so the color scale follows the actual signal level.
     let min = Infinity;
     for (let i = 0; i < mags.length; i++) if (mags[i] < min) min = mags[i];
     if (Number.isFinite(min)) {
       this.noiseFloor = min < this.noiseFloor ? min : this.noiseFloor * 0.98 + min * 0.02;
     }
-    const floor = this.noiseFloor;
 
-    // Build the new row: each pixel samples the FFT bin it maps to.
-    const data = this.row.data;
+    // Keep a copy for re-rendering on zoom/pan.
+    this.cols.unshift(mags.slice());
+    if (this.cols.length > h) this.cols.pop();
+
+    // Fast path: scroll down one pixel and stamp the new row at the top.
+    this.fillRow(this.row.data, mags);
+    this.wfCtx.drawImage(this.wf, 0, 0, w, h - 1, 0, 1, w, h - 1);
+    this.wfCtx.putImageData(this.row, 0, 0);
+  }
+
+  /** Render one row of pixels (width = canvas width) from a magnitude column. */
+  private fillRow(data: Uint8ClampedArray, mags: Float32Array): void {
+    const w = this.width;
     const n = mags.length;
+    const floor = this.noiseFloor;
     for (let x = 0; x < w; x++) {
-      const bin = ((x / w) * n) | 0;
-      const norm = (mags[bin] - floor) / DYN_RANGE_DB;
-      const [r, g, b] = colormap(norm);
+      const f = this.fractionForX(x);
+      let bin = (f * n) | 0;
+      if (bin < 0) bin = 0;
+      else if (bin >= n) bin = n - 1;
+      const [r, g, b] = colormap((mags[bin] - floor) / DYN_RANGE_DB);
       const o = x * 4;
       data[o] = r;
       data[o + 1] = g;
       data[o + 2] = b;
       data[o + 3] = 255;
     }
-
-    // Scroll the spectrogram down one pixel, then stamp the new row on top.
-    this.wfCtx.drawImage(this.wf, 0, 0, w, h - 1, 0, 1, w, h - 1);
-    this.wfCtx.putImageData(this.row, 0, 0);
   }
 
-  private xForOffset(offsetHz: number): number {
-    return this.width * (0.5 + offsetHz / this.sampleRate);
+  /** Redraw the whole spectrogram from the column history at the current view. */
+  private renderAll(): void {
+    const w = this.width;
+    const h = this.height;
+    if (w < 1 || h < 1) return;
+    const img = this.wfCtx.createImageData(w, h);
+    const data = img.data;
+    // Background for rows with no data yet.
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = BG[0];
+      data[i + 1] = BG[1];
+      data[i + 2] = BG[2];
+      data[i + 3] = 255;
+    }
+    const rows = Math.min(this.cols.length, h);
+    for (let y = 0; y < rows; y++) {
+      this.fillRow(data.subarray(y * w * 4, (y + 1) * w * 4), this.cols[y]);
+    }
+    this.wfCtx.putImageData(img, 0, 0);
   }
 
-  private offsetForX(x: number): number {
-    return (x / this.width - 0.5) * this.sampleRate;
+  private scheduleRender(): void {
+    if (this.renderScheduled) return;
+    this.renderScheduled = true;
+    requestAnimationFrame(() => {
+      this.renderScheduled = false;
+      this.renderAll();
+      this.drawOverlay();
+    });
   }
 
+  // --- overlay ---------------------------------------------------------------
   private drawOverlay(): void {
     const ctx = this.ovCtx;
     const w = this.width;
     const h = this.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Channel-width band.
-    const bandPx = (this.bandwidthHz / this.sampleRate) * w;
-    const cx = this.xForOffset(this.offsetHz);
+    // Channel-width band + center marker.
+    const cx = this.xForFraction(0.5 + this.offsetHz / this.sampleRate);
+    const bandPx = (this.bandwidthHz / this.sampleRate) * this.zoom * w;
     ctx.fillStyle = "rgba(74, 222, 128, 0.15)";
     ctx.fillRect(cx - bandPx / 2, 0, bandPx, h);
-    // Center marker.
     ctx.strokeStyle = "rgba(74, 222, 128, 0.9)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -168,24 +254,22 @@ export class Waterfall {
     ctx.lineTo(cx, h);
     ctx.stroke();
 
-    // Frequency axis (a few ticks across the span).
-    ctx.fillStyle = "rgba(230, 232, 236, 0.85)";
+    // Frequency axis across the *visible* range.
     ctx.font = "11px ui-monospace, monospace";
     ctx.textBaseline = "top";
     const ticks = 5;
     for (let i = 0; i <= ticks; i++) {
-      const frac = i / ticks;
-      const x = frac * w;
-      const hz = this.centerHz + (frac - 0.5) * this.sampleRate;
+      const x = (i / ticks) * w;
+      const hz = this.freqForFraction(this.fractionForX(x));
       ctx.strokeStyle = "rgba(255,255,255,0.15)";
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, 6);
       ctx.stroke();
-      const label = (hz / 1e6).toFixed(3);
+      const label = (hz / 1e6).toFixed(this.zoom >= 8 ? 4 : 3);
       const tw = ctx.measureText(label).width;
-      let lx = x - tw / 2;
-      lx = Math.max(2, Math.min(w - tw - 2, lx));
+      const lx = Math.max(2, Math.min(w - tw - 2, x - tw / 2));
+      ctx.fillStyle = "rgba(230, 232, 236, 0.85)";
       ctx.fillText(label, lx, 8);
     }
 
@@ -194,16 +278,64 @@ export class Waterfall {
     const sel = `${(selHz / 1e6).toFixed(4)} MHz`;
     ctx.fillStyle = "rgba(74, 222, 128, 1)";
     const sw = ctx.measureText(sel).width;
-    let sx = cx + 6;
-    if (sx + sw > w - 2) sx = cx - sw - 6;
-    ctx.fillText(sel, sx, h - 18);
+    const sx = cx + 6 + sw > w - 2 ? cx - sw - 6 : cx + 6;
+    ctx.fillText(sel, Math.max(2, sx), h - 18);
+
+    // Zoom / visible-span readout (top-right).
+    if (this.zoom > 1.001) {
+      const spanKHz = (this.sampleRate / this.zoom) / 1e3;
+      const z = `${this.zoom.toFixed(1)}× · ${spanKHz.toFixed(spanKHz < 100 ? 1 : 0)} kHz`;
+      ctx.fillStyle = "rgba(230, 232, 236, 0.7)";
+      const zw = ctx.measureText(z).width;
+      ctx.fillText(z, w - zw - 6, 8);
+    }
   }
 
-  private onClick(e: PointerEvent): void {
-    const rect = this.overlay.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const offset = this.offsetForX(x);
-    this.setOffset(offset);
-    this.onTune?.(offset);
+  // --- interaction -----------------------------------------------------------
+  private localX(e: PointerEvent | WheelEvent): number {
+    return e.clientX - this.overlay.getBoundingClientRect().left;
+  }
+
+  private onWheel(e: WheelEvent): void {
+    e.preventDefault();
+    const x = this.localX(e);
+    const fCursor = this.fractionForX(x);
+    const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
+    this.zoom = Math.min(MAX_ZOOM, Math.max(1, this.zoom * factor));
+    // Keep the frequency under the cursor pinned to the same pixel.
+    this.centerFrac = this.clampCenter(fCursor - this.viewWidth() * (x / this.width - 0.5));
+    this.scheduleRender();
+  }
+
+  private onPointerDown(e: PointerEvent): void {
+    if (e.button === 1) {
+      // Middle button: start panning.
+      e.preventDefault();
+      this.panning = true;
+      this.panStartX = this.localX(e);
+      this.panStartCenter = this.centerFrac;
+      this.overlay.setPointerCapture(e.pointerId);
+      this.overlay.style.cursor = "grabbing";
+    } else if (e.button === 0) {
+      // Left button: tune the decode channel.
+      const offset = (this.fractionForX(this.localX(e)) - 0.5) * this.sampleRate;
+      this.setOffset(offset);
+      this.onTune?.(offset);
+    }
+  }
+
+  private onPointerMove(e: PointerEvent): void {
+    if (!this.panning) return;
+    const dx = this.localX(e) - this.panStartX;
+    const deltaFrac = -(dx / this.width) * this.viewWidth();
+    this.centerFrac = this.clampCenter(this.panStartCenter + deltaFrac);
+    this.scheduleRender();
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    if (!this.panning) return;
+    this.panning = false;
+    this.overlay.releasePointerCapture?.(e.pointerId);
+    this.overlay.style.cursor = "crosshair";
   }
 }
