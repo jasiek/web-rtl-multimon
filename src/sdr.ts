@@ -40,10 +40,30 @@ export class Sdr {
   /** Optional tap on the raw CU8 stream, used for diagnostic recording. */
   onSamples: ((bytes: Uint8Array) => void) | undefined;
 
-  /** Must be called from a user gesture (WebUSB requires transient activation). */
-  async connect(opts: SdrOptions): Promise<{ sampleRate: number; centerFrequency: number }> {
+  /**
+   * One-time pairing: prompt the WebUSB chooser (requires a user gesture) so the
+   * browser authorizes this dongle. Afterwards getDevices() returns it silently,
+   * so start()/stop() can open and close it without ever prompting again.
+   */
+  async pair(): Promise<void> {
+    await RtlSdr.requestDevice(); // throws if the user cancels the chooser
+  }
+
+  /** True if a dongle has already been authorized (this session or a prior one). */
+  async isPaired(): Promise<boolean> {
+    return (await RtlSdr.getDevices()).length > 0;
+  }
+
+  /**
+   * Open the already-paired dongle and apply tuning. No user gesture needed:
+   * it re-acquires the authorized device via getDevices(). Throws if nothing has
+   * been paired yet.
+   */
+  async start(opts: SdrOptions): Promise<{ sampleRate: number; centerFrequency: number }> {
     this.opts = opts;
-    return this.openAndTune(await RtlSdr.requestDevice());
+    const [device] = await RtlSdr.getDevices();
+    if (!device) throw new Error("No paired RTL-SDR — click ‘Pair device’ first.");
+    return this.openAndTune(device);
   }
 
   // Open a freshly-acquired device and apply the remembered tuning. On success

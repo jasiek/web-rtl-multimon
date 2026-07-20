@@ -66,11 +66,17 @@ npm run build:wasm
 npm run dev          # open the printed localhost URL
 ```
 
-Set the **center frequency** to a band with pager traffic (see below), pick a
-**sample rate** (the waterfall span), and click **Connect SDR**. When the
-waterfall lights up, **click a signal** to point the green channel marker at it;
-decoded packets stream into the table. Tick more **demodulators** and hit
-**Apply DSP** to re-run the decoders without re-tuning the radio.
+Click **Pair device** once and choose your dongle in the browser prompt — after
+that the browser remembers it, so **Start** / **Stop** never prompt again. Set
+the **center frequency** to a band with pager traffic (see below), pick a
+**sample rate** (the waterfall span), and press **Start**. When the waterfall
+lights up, **click a signal** to point the green channel marker at it; decoded
+packets stream into the table.
+
+Every setting applies live while running — no reconnect: frequency and the
+waterfall marker retune instantly; channel width, FFT size and demodulator
+selection restart just the decoder; sample rate and gain do a quick, silent
+stream restart. **Stop** releases the dongle (it stays paired for next time).
 
 ### Where to listen
 

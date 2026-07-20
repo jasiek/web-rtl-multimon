@@ -1,10 +1,14 @@
 // Page controller: wires WebUSB sample capture (main thread) to the DSP worker
 // (FFT waterfall + channelizer/FM-demod + multimon-ng) and renders the results.
 //
-// The main thread only touches the radio and the DOM. Every heavy step — FFT,
-// channelize, FM demod, and multimon-ng itself — lives in the worker, so the
-// waterfall stays smooth. Captured cu8 blocks are transferred to the worker;
-// waterfall columns and decoded packets come back.
+// Lifecycle is split so the device is picked only once:
+//   • Pair  — one gesture-gated WebUSB chooser; the browser then remembers the
+//             dongle, so Start/Stop never prompt again (they use getDevices()).
+//   • Start — open the paired dongle, spin up the worker, begin streaming.
+//   • Stop  — halt streaming and release the dongle (still paired).
+// All parameters auto-apply while running: frequency and the waterfall marker
+// retune live; channel width / FFT / demods restart just the decoder; sample
+// rate / gain do a quick transparent stream restart. None re-prompt.
 import { Sdr, type SampleSink } from "./sdr";
 import { Waterfall } from "./waterfall";
 import type { FromWorker, StartParams, ToWorker } from "./worker/protocol";
@@ -17,8 +21,8 @@ const els = {
   gain: $<HTMLSelectElement>("gain"),
   bw: $<HTMLInputElement>("bw"),
   fft: $<HTMLSelectElement>("fft"),
-  connect: $<HTMLButtonElement>("connect"),
-  apply: $<HTMLButtonElement>("apply"),
+  pair: $<HTMLButtonElement>("pair"),
+  start: $<HTMLButtonElement>("start"),
   stop: $<HTMLButtonElement>("stop"),
   dot: $<HTMLSpanElement>("dot"),
   statusText: $<HTMLSpanElement>("statusText"),
@@ -38,6 +42,10 @@ const AUDIO_RATE = 22050;
 const sdr = new Sdr();
 const waterfall = new Waterfall(els.wfwrap);
 let worker: Worker | null = null;
+let paired = false;
+let streaming = false;
+let pumpRunning = false;
+let pumpPromise: Promise<void> | null = null;
 let offsetHz = 0;
 let packetCount = 0;
 let active: { centerFrequency: number; sampleRate: number } | null = null;
@@ -69,10 +77,36 @@ function logLines(lines: string[]) {
 }
 const logLine = (line: string) => logLines([line]);
 
+function debounce<A extends unknown[]>(fn: (...a: A) => void, ms: number): (...a: A) => void {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  return (...a: A) => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => fn(...a), ms);
+  };
+}
+
+function updateButtons() {
+  els.pair.disabled = false;
+  els.start.disabled = !paired || streaming;
+  els.stop.disabled = !streaming;
+}
+
 function selectedDemods(): string[] {
   return Array.from(
     document.querySelectorAll<HTMLInputElement>('.demods input[type="checkbox"]:checked'),
   ).map((c) => c.value);
+}
+
+function bandwidthHz(): number {
+  return Math.max(2500, parseFloat(els.bw.value) * 1000);
+}
+
+function deviceOpts() {
+  return {
+    centerFrequency: Math.round(parseFloat(els.freq.value) * 1e6),
+    sampleRate: parseInt(els.rate.value, 10),
+    gain: els.gain.value === "auto" ? undefined : parseFloat(els.gain.value),
+  };
 }
 
 function dspParams(sampleRate: number): StartParams {
@@ -80,18 +114,14 @@ function dspParams(sampleRate: number): StartParams {
     sampleRate,
     audioRate: AUDIO_RATE,
     offsetHz,
-    channelBandwidthHz: Math.max(2500, parseFloat(els.bw.value) * 1000),
+    channelBandwidthHz: bandwidthHz(),
     demods: selectedDemods(),
     fftSize: parseInt(els.fft.value, 10),
   };
 }
 
 function updateChannelReadout() {
-  if (!active) {
-    els.chan.textContent = "—";
-    return;
-  }
-  els.chan.textContent = `${((active.centerFrequency + offsetHz) / 1e6).toFixed(4)} MHz`;
+  els.chan.textContent = active ? `${((active.centerFrequency + offsetHz) / 1e6).toFixed(4)} MHz` : "—";
 }
 
 // --- packet rendering --------------------------------------------------------
@@ -122,11 +152,12 @@ function post(msg: ToWorker, transfer?: Transferable[]) {
 function handleWorkerMessage(msg: FromWorker) {
   switch (msg.type) {
     case "ready":
-      if (!active) return;
+      if (!streaming || !active) return;
       setStatus(`Listening @ ${(active.centerFrequency / 1e6).toFixed(3)} MHz`, "on");
-      els.apply.disabled = false;
-      els.stop.disabled = false;
-      startPump();
+      // Begin the USB read loop only once per stream — a decoder restart also
+      // fires "ready", and starting a second pump would issue concurrent USB
+      // reads on one dongle (which fail as "USB read error").
+      startPumpOnce();
       break;
     case "waterfall":
       waterfall.pushColumn(msg.mags);
@@ -160,102 +191,185 @@ const workerSink: SampleSink = {
   overflows: () => 0,
 };
 
+function startPumpOnce() {
+  if (pumpRunning) return;
+  pumpRunning = true;
+  pumpPromise = (async () => {
+    await sdr.resetBuffer().catch(() => {});
+    await sdr.pump(workerSink, undefined, (warning) => logLine(warning)).catch((e) => {
+      if (streaming) {
+        setStatus("USB read failed", "err");
+        logLine(`pump stopped: ${e?.message ?? e}`);
+      }
+    });
+  })();
+}
+
 // --- lifecycle ---------------------------------------------------------------
-async function connect() {
+async function pair() {
   const support = checkSupport();
   if (support) {
     setStatus("Unsupported", "err");
     return;
   }
+  els.pair.disabled = true;
+  setStatus("Pairing…", "idle");
+  try {
+    await sdr.pair();
+    paired = true;
+    setStatus("Paired — press Start", "idle");
+  } catch (e: any) {
+    setStatus("Pairing cancelled", "idle");
+    logLine(`pair: ${e?.message ?? e}`);
+  }
+  updateButtons();
+}
 
-  const centerFrequency = Math.round(parseFloat(els.freq.value) * 1e6);
-  const sampleRate = parseInt(els.rate.value, 10);
-  const gain = els.gain.value === "auto" ? undefined : parseFloat(els.gain.value);
-
-  els.connect.disabled = true;
-  setStatus("Requesting device…", "idle");
-
+// Open the paired dongle, spin up the worker, and begin streaming.
+async function openAndRun() {
+  const opts = deviceOpts();
   let actual: { sampleRate: number; centerFrequency: number };
   try {
-    actual = await sdr.connect({ centerFrequency, sampleRate, gain });
+    actual = await sdr.start(opts);
   } catch (e: any) {
-    setStatus("Connect failed", "err");
-    logLine(`connect error: ${e?.message ?? e}`);
-    els.connect.disabled = false;
-    return;
+    setStatus("Start failed", "err");
+    logLine(`start error: ${e?.message ?? e}`);
+    throw e;
   }
   active = actual;
-  offsetHz = 0;
 
   waterfall.setChannel(actual.centerFrequency, actual.sampleRate);
-  waterfall.setBandwidth(Math.max(2500, parseFloat(els.bw.value) * 1000));
-  waterfall.setOffset(0);
+  waterfall.setBandwidth(bandwidthHz());
+  waterfall.setOffset(offsetHz);
   updateChannelReadout();
 
-  // Spin up the DSP worker and hand it the signal-chain parameters.
   worker = new Worker(new URL("./worker/dsp-worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (ev: MessageEvent<FromWorker>) => handleWorkerMessage(ev.data);
   worker.onerror = (e) => {
     setStatus("Worker error", "err");
     logLine(`worker error: ${e.message}`);
   };
-
   setStatus("Loading decoder…", "idle");
   post({ type: "start", params: dspParams(actual.sampleRate) });
 
   logLine(
-    `connected: ${(actual.centerFrequency / 1e6).toFixed(3)} MHz @ ${(actual.sampleRate / 1e3).toFixed(0)} kHz span, ` +
-      `gain ${gain == null ? "auto (AGC)" : gain.toFixed(1) + " dB"}`,
+    `streaming: ${(actual.centerFrequency / 1e6).toFixed(3)} MHz @ ${(actual.sampleRate / 1e3).toFixed(0)} kHz span, ` +
+      `gain ${opts.gain == null ? "auto (AGC)" : opts.gain.toFixed(1) + " dB"}`,
   );
 }
 
-// Started once the worker reports the decoder is ready (see handleWorkerMessage).
-async function startPump() {
-  await sdr.resetBuffer().catch(() => {});
-  sdr
-    .pump(workerSink, undefined, (warning) => logLine(warning))
-    .catch((e) => {
-      setStatus("USB read failed", "err");
-      logLine(`pump stopped: ${e?.message ?? e}`);
-    });
+// Halt streaming: stop the pump, release the dongle, tear down the worker.
+async function teardown() {
+  pumpRunning = false;
+  await sdr.stop(); // closes the device -> the pending readSamples rejects
+  await pumpPromise?.catch(() => {});
+  pumpPromise = null;
+  post({ type: "stop" });
+  worker?.terminate();
+  worker = null;
+  active = null;
 }
 
-// Restart the decoders with the current channel-width / FFT / demod selection,
-// without touching the (still-running) radio.
-function applyDsp() {
-  if (!active || !worker) return;
-  waterfall.setBandwidth(Math.max(2500, parseFloat(els.bw.value) * 1000));
-  setStatus("Applying…", "idle");
+async function startStream() {
+  if (streaming) return;
+  els.start.disabled = true;
+  streaming = true;
+  try {
+    await openAndRun();
+  } catch {
+    streaming = false;
+  }
+  updateButtons();
+}
+
+async function stopStream() {
+  if (!streaming) return;
+  streaming = false;
+  els.stop.disabled = true;
+  await teardown();
+  updateChannelReadout();
+  els.meter.style.width = "0";
+  setStatus("Stopped", "idle");
+  updateButtons();
+}
+
+// Restart the whole stream (device reopen + worker) — for sample-rate/gain
+// changes. Silent: the dongle stays paired, so no chooser appears.
+async function restartStream() {
+  if (!streaming) return;
+  setStatus("Restarting…", "idle");
+  await teardown();
+  try {
+    await openAndRun();
+  } catch {
+    streaming = false;
+    updateButtons();
+  }
+}
+
+// Restart just the decoders (worker only) — for channel width / FFT / demod
+// changes. The radio and the USB pump keep running untouched.
+function restartDecoder() {
+  if (!streaming || !worker || !active) return;
+  waterfall.setBandwidth(bandwidthHz());
   post({ type: "start", params: dspParams(active.sampleRate) });
   logLine(`decoders restarted: ${selectedDemods().join(", ") || "(none)"}`);
 }
 
-async function stop() {
-  els.stop.disabled = true;
-  els.apply.disabled = true;
-  active = null;
-  updateChannelReadout();
-  await sdr.stop();
-  post({ type: "stop" });
-  worker?.terminate();
-  worker = null;
-  setStatus("Stopped", "idle");
-  els.connect.disabled = false;
-}
+// --- parameter change handlers (auto-apply) ---------------------------------
+const onFreqChange = debounce(() => {
+  if (!streaming || !active) return;
+  const freq = Math.round(parseFloat(els.freq.value) * 1e6);
+  if (!Number.isFinite(freq)) return;
+  sdr
+    .setCenterFrequency(freq)
+    .then((actualFreq) => {
+      active!.centerFrequency = actualFreq;
+      waterfall.setChannel(actualFreq, active!.sampleRate);
+      updateChannelReadout();
+    })
+    .catch((e) => logLine(`retune failed: ${e?.message ?? e}`));
+}, 200);
+
+const onBandwidthChange = debounce(() => {
+  waterfall.setBandwidth(bandwidthHz());
+  if (streaming) restartDecoder();
+}, 350);
+
+const onDemodChange = debounce(() => restartDecoder(), 250);
 
 // --- init --------------------------------------------------------------------
 waterfall.onTune = (hz) => {
   offsetHz = hz;
-  post({ type: "tune", offsetHz });
+  if (streaming) post({ type: "tune", offsetHz });
   updateChannelReadout();
 };
+
+els.pair.addEventListener("click", pair);
+els.start.addEventListener("click", startStream);
+els.stop.addEventListener("click", stopStream);
+els.freq.addEventListener("input", onFreqChange);
+els.bw.addEventListener("input", onBandwidthChange);
+els.fft.addEventListener("change", () => streaming && restartDecoder());
+els.rate.addEventListener("change", () => streaming && restartStream());
+els.gain.addEventListener("change", () => streaming && restartStream());
+document
+  .querySelectorAll<HTMLInputElement>('.demods input[type="checkbox"]')
+  .forEach((c) => c.addEventListener("change", onDemodChange));
 
 const support = checkSupport();
 if (support) {
   els.unsupported.hidden = false;
   els.unsupported.textContent = support;
-  if (!("usb" in navigator)) els.connect.disabled = true;
+  els.pair.disabled = true;
+} else {
+  // If a dongle was authorized in a previous session, it's still paired.
+  sdr.isPaired().then((yes) => {
+    if (yes && !streaming) {
+      paired = true;
+      setStatus("Paired — press Start", "idle");
+      updateButtons();
+    }
+  });
 }
-els.connect.addEventListener("click", connect);
-els.apply.addEventListener("click", applyDsp);
-els.stop.addEventListener("click", stop);
+updateButtons();

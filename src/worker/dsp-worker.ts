@@ -38,8 +38,14 @@ function post(msg: FromWorker, transfer?: Transferable[]): void {
   (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer ?? []);
 }
 
+// Bumped on each (re)start so a superseded multimon instance — whose main loop
+// exits when we close its queue during a decoder restart — doesn't report a
+// spurious "exit" for the run that just replaced it.
+let generation = 0;
+
 async function start(params: StartParams): Promise<void> {
   await stop(); // tear down any previous run
+  const gen = ++generation;
 
   sampleRate = params.sampleRate;
   fft = new Fft(params.fftSize);
@@ -60,7 +66,7 @@ async function start(params: StartParams): Promise<void> {
       onLog: (line) => post({ type: "log", line }),
       onReady: () => post({ type: "ready" }),
       onExit: (message) => {
-        if (running) post({ type: "exit", message });
+        if (running && gen === generation) post({ type: "exit", message });
       },
     });
   } catch (e: any) {
