@@ -45,6 +45,7 @@
         border-radius: 6px; padding: 8px 10px; font: 13px var(--mono); width: 130px;
       }
       select { cursor: pointer; width: 150px; }
+      .controls #preset { width: 240px; }
       button {
         background: var(--accent); color: #06210f; border: none; border-radius: 6px;
         padding: 9px 16px; font-weight: 600; font-size: 13px; cursor: pointer;
@@ -119,6 +120,10 @@
       <div id="unsupported" class="banner" hidden></div>
 
       <div class="controls">
+        <div class="field">
+          <label for="preset">Preset (known pager freqs)</label>
+          <select id="preset"><option value="" selected>Choose…</option></select>
+        </div>
         <div class="field">
           <label for="freq">Center frequency (MHz)</label>
           <input id="freq" type="number" value="153.350" step="0.0125" min="24" max="1766" />

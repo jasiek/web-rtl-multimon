@@ -81,14 +81,27 @@ stream restart. **Stop** releases the dongle (it stays paired for next time).
 
 ### Where to listen
 
-Pager and data activity varies by region. Common starting points:
+The **Preset** dropdown lists known pager allocations by country (flag +
+frequency), so you can jump straight to an active network. They're network
+*centers* — regional channels vary, so treat them as starting points and scan
+nearby. Highlights:
 
-- **VHF pagers (POCSAG/FLEX):** ~137–169 MHz (check your local allocations).
-- **929–932 MHz:** FLEX/POCSAG paging in North America.
-- **AFSK1200:** 144.800 MHz (APRS, EU) / 144.390 MHz (APRS, NA).
+- 🇳🇱 **169.650 MHz** — P2000, the unencrypted nationwide emergency-services
+  network (FLEX); the classic thing to watch.
+- 🇬🇧 **153.35 / 153.25 / 138.15 MHz** — UK wide-area POCSAG.
+- 🇸🇪 **169.800 MHz** — Minicall (POCSAG).
+- 🇩🇪 **466.075 / 448.425 MHz** — Cityruf / e*Message (POCSAG).
+- 🇫🇷 **466.025 MHz** — Alphapage (POCSAG).
+- 🇪🇺 **439.9875 MHz** — DAPNET amateur paging (POCSAG), used across Europe.
+- 🇺🇸🇨🇦 **929–932 MHz** — North American FLEX/POCSAG (e.g. 931.9375 MHz SkyTel;
+  929.2875 MHz PageNet in Canada).
 
 The default channel width (7.5 kHz) suits narrowband FM pagers; widen it for
-signals that occupy more spectrum.
+signals that occupy more spectrum. Sources for the presets: the
+[POCSAG](https://www.sigidwiki.com/wiki/POCSAG)/[FLEX](https://www.sigidwiki.com/wiki/FLEX)
+pages on SigidWiki, [P2000 (Wikipedia)](https://en.wikipedia.org/wiki/P2000_(network)),
+[DAPNET (Wikipedia)](https://en.wikipedia.org/wiki/DAPNET), and Canada's
+[ISED paging band 929–932 MHz](https://ised-isde.canada.ca/site/spectrum-management-telecommunications/en/official-publications/legislation-regulations-and-treaties/terrestrial-radiocom-agreements-and-arrangements-traa/paging-operations-band-929-932-mhz).
 
 ## Deploy to GitHub Pages
 

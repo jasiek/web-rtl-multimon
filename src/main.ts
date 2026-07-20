@@ -16,6 +16,7 @@ import type { FromWorker, StartParams, ToWorker } from "./worker/protocol";
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const els = {
+  preset: $<HTMLSelectElement>("preset"),
   freq: $<HTMLInputElement>("freq"),
   rate: $<HTMLSelectElement>("rate"),
   gain: $<HTMLSelectElement>("gain"),
@@ -42,6 +43,31 @@ const els = {
 
 // multimon-ng's demodulators fix the input rate at 22050 Hz.
 const AUDIO_RATE = 22050;
+
+// Known pager allocations by country (frequency in MHz). Sourced from public
+// pager/scanner references — see README. These are network centers; actual
+// on-air channels vary regionally, so treat them as starting points.
+interface Preset {
+  flag: string;
+  country: string;
+  mhz: number;
+  label: string;
+}
+const PRESETS: Preset[] = [
+  { flag: "🇳🇱", country: "Netherlands", mhz: 169.65, label: "P2000 emergency (FLEX)" },
+  { flag: "🇬🇧", country: "UK", mhz: 153.35, label: "wide-area (POCSAG)" },
+  { flag: "🇬🇧", country: "UK", mhz: 153.25, label: "wide-area (POCSAG)" },
+  { flag: "🇬🇧", country: "UK", mhz: 138.15, label: "PageOne (POCSAG)" },
+  { flag: "🇸🇪", country: "Sweden", mhz: 169.8, label: "Minicall (POCSAG)" },
+  { flag: "🇩🇪", country: "Germany", mhz: 466.075, label: "Cityruf (POCSAG)" },
+  { flag: "🇩🇪", country: "Germany", mhz: 448.425, label: "e*Message/BOS (POCSAG)" },
+  { flag: "🇫🇷", country: "France", mhz: 466.025, label: "Alphapage (POCSAG)" },
+  { flag: "🇪🇺", country: "Europe", mhz: 439.9875, label: "DAPNET amateur (POCSAG)" },
+  { flag: "🇺🇸", country: "USA", mhz: 929.9375, label: "American Messaging (FLEX)" },
+  { flag: "🇺🇸", country: "USA", mhz: 931.0625, label: "FLEX / POCSAG" },
+  { flag: "🇺🇸", country: "USA/Canada", mhz: 931.9375, label: "SkyTel nationwide (FLEX)" },
+  { flag: "🇨🇦", country: "Canada", mhz: 929.2875, label: "PageNet (POCSAG)" },
+];
 
 const sdr = new Sdr();
 const waterfall = new Waterfall(els.wfwrap);
@@ -365,8 +391,8 @@ function restartDecoder() {
 }
 
 // --- parameter change handlers (auto-apply) ---------------------------------
-const onFreqChange = debounce(() => {
-  updateCommand(); // reflect the typed frequency even before streaming
+function applyFrequency() {
+  updateCommand(); // reflect the current frequency even before streaming
   if (!streaming || !active) return;
   const freq = Math.round(parseFloat(els.freq.value) * 1e6);
   if (!Number.isFinite(freq)) return;
@@ -378,7 +404,31 @@ const onFreqChange = debounce(() => {
       updateChannelReadout();
     })
     .catch((e) => logLine(`retune failed: ${e?.message ?? e}`));
-}, 200);
+}
+const onFreqChange = debounce(applyFrequency, 200);
+
+// Populate the preset dropdown and apply a chosen preset as the new center
+// frequency (offset reset to 0 so the decoded channel is exactly the preset).
+function populatePresets() {
+  for (const p of PRESETS) {
+    const opt = document.createElement("option");
+    opt.value = String(p.mhz);
+    opt.textContent = `${p.flag} ${p.mhz.toFixed(4)} MHz · ${p.country} ${p.label}`;
+    els.preset.appendChild(opt);
+  }
+}
+
+function onPresetChange() {
+  const v = els.preset.value;
+  els.preset.value = ""; // reset to the "Choose…" placeholder
+  if (!v) return;
+  els.freq.value = v;
+  offsetHz = 0;
+  waterfall.setOffset(0);
+  if (streaming) post({ type: "tune", offsetHz: 0 });
+  applyFrequency();
+  logLine(`preset: ${v} MHz`);
+}
 
 const onBandwidthChange = debounce(() => {
   waterfall.setBandwidth(bandwidthHz());
@@ -406,6 +456,7 @@ els.pair.addEventListener("click", pair);
 els.start.addEventListener("click", startStream);
 els.stop.addEventListener("click", stopStream);
 els.clear.addEventListener("click", clearPackets);
+els.preset.addEventListener("change", onPresetChange);
 els.freq.addEventListener("input", onFreqChange);
 els.bw.addEventListener("input", onBandwidthChange);
 els.fft.addEventListener("change", () => streaming && restartDecoder());
@@ -443,5 +494,6 @@ if (support) {
     }
   });
 }
+populatePresets();
 updateButtons();
 updateCommand();
