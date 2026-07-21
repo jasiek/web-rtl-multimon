@@ -23,6 +23,12 @@ const SAMPLES_PER_READ = 16 * 1024;
 // Window over which RF-loss (dropped-sample) throughput is averaged, in ms.
 const RF_LOSS_WINDOW_MS = 1000;
 
+// How many USB bulk reads to keep outstanding at once. One transfer at a time
+// starves the dongle (its FIFO overruns between our reads); several in flight
+// keep it fed. 8 × 32 KiB ≈ 256 KiB, matching librtlsdr's default buffering,
+// and ~124 ms of slack at 1 MHz — ample to ride out main-thread render stalls.
+const USB_TRANSFER_DEPTH = 8;
+
 // How many back-to-back USB read failures to tolerate before giving up. A
 // handful of transient transferIn errors is normal; sustained failure is not.
 const MAX_CONSECUTIVE_USB_ERRORS = 10;
@@ -140,15 +146,40 @@ export class Sdr {
     let winSamples = 0;
     let winStart = performance.now();
     let firstWindow = true; // discard: it includes resetBuffer/start-up latency
+    // Keep several USB reads in flight at once. With only one transfer
+    // outstanding, the dongle's FIFO overruns in the gap between our reads and
+    // silently drops samples (the "Lost RF" the meter shows — ~6% at 1 MHz).
+    // Pipelining transfers means the dongle always has a buffer to DMA into, so
+    // it never starves; librtlsdr does the same with ~15 buffers.
+    let queue: Promise<ArrayBuffer>[] = [];
+    const refill = (device: RtlSdrDevice) => {
+      while (this.running && queue.length < USB_TRANSFER_DEPTH) {
+        queue.push(device.readSamples(SAMPLES_PER_READ));
+      }
+    };
+    // Discard every outstanding transfer (they're on a now-suspect device).
+    // Attaching allSettled handlers here also swallows their rejections cleanly.
+    const drain = async () => {
+      const pending = queue;
+      queue = [];
+      await Promise.allSettled(pending);
+    };
+
     while (this.running) {
       const device = this.device;
       if (!device) throw new Error("SDR not connected");
+      refill(device); // top up to depth before consuming the oldest
+      const next = queue.shift();
+      if (!next) break; // running but nothing queued — shouldn't happen
       let buf: ArrayBuffer;
       try {
-        buf = await device.readSamples(SAMPLES_PER_READ);
+        buf = await next;
         consecutiveErrors = 0;
       } catch (e: any) {
         if (!this.running) break;
+        // The rest of the pipeline is on the same suspect device; discard it
+        // before recovering so we don't process buffers read across the fault.
+        await drain();
         const msg = e?.message ?? String(e);
         // A real USB disconnect means the dongle dropped off the bus and
         // re-enumerated as a fresh device — the handle is dead and no amount
@@ -159,15 +190,19 @@ export class Sdr {
           if (!this.running) break;
           if (!ok) throw new Error(`re-attach timed out after ${REATTACH_TIMEOUT_MS / 1000}s: ${msg}`);
           consecutiveErrors = 0;
-          continue;
+        } else {
+          // Otherwise a transient transferIn hiccup: reset and retry a few
+          // times, giving up only if they persist (points at a real problem).
+          consecutiveErrors++;
+          if (consecutiveErrors > MAX_CONSECUTIVE_USB_ERRORS) throw e;
+          onWarn?.(`USB read error (retry ${consecutiveErrors}): ${msg}`);
+          await device.resetBuffer().catch(() => {});
+          await new Promise((r) => setTimeout(r, 50));
         }
-        // Otherwise a transient transferIn hiccup: reset and retry a few times,
-        // giving up only if they persist (which points at a real problem).
-        consecutiveErrors++;
-        if (consecutiveErrors > MAX_CONSECUTIVE_USB_ERRORS) throw e;
-        onWarn?.(`USB read error (retry ${consecutiveErrors}): ${msg}`);
-        await device.resetBuffer().catch(() => {});
-        await new Promise((r) => setTimeout(r, 50));
+        // The recovery gap isn't steady-state loss; restart the RF-loss window.
+        winSamples = 0;
+        winStart = performance.now();
+        firstWindow = true;
         continue;
       }
       if (!this.running) break;
@@ -197,6 +232,8 @@ export class Sdr {
         winStart = now;
       }
     }
+    // Stopped (or bailed out): reject/settle any transfers still outstanding.
+    await drain();
   }
 
   async setCenterFrequency(freq: number): Promise<number> {
