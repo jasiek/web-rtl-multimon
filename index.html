@@ -3,243 +3,232 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%93%A1%3C/text%3E%3C/svg%3E"
+    />
     <title>web-rtl-multimon &mdash; decode pagers &amp; tones in the browser</title>
-    <style>
-      :root {
-        --bg: #0f1115;
-        --panel: #171a21;
-        --border: #272b35;
-        --text: #e6e8ec;
-        --muted: #8b909c;
-        --accent: #4ade80;
-        --accent-dim: #1f3d2c;
-        --danger: #f87171;
-        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font: 14px/1.5 system-ui, -apple-system, sans-serif;
-      }
-      header {
-        display: flex; align-items: baseline; gap: 12px;
-        padding: 16px 20px; border-bottom: 1px solid var(--border);
-      }
-      header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-      header .sub { color: var(--muted); font-size: 12px; }
-      header a { color: var(--accent); text-decoration: none; }
-      header .gh { margin-left: auto; align-self: center; color: var(--muted); font-size: 13px; }
-      header .gh:hover { color: var(--text); }
-      main { padding: 20px; max-width: 1200px; margin: 0 auto; }
-      .controls {
-        display: flex; flex-wrap: wrap; align-items: end; gap: 12px;
-        background: var(--panel); border: 1px solid var(--border);
-        border-radius: 10px; padding: 16px;
-      }
-      .field { display: flex; flex-direction: column; gap: 4px; }
-      .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-      input[type="number"], select {
-        background: var(--bg); border: 1px solid var(--border); color: var(--text);
-        border-radius: 6px; padding: 8px 10px; font: 13px var(--mono); width: 130px;
-      }
-      select { cursor: pointer; width: 150px; }
-      .controls #preset { width: 240px; }
-      button {
-        background: var(--accent); color: #06210f; border: none; border-radius: 6px;
-        padding: 9px 16px; font-weight: 600; font-size: 13px; cursor: pointer;
-      }
-      button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
-      button:disabled { opacity: .4; cursor: not-allowed; }
-      .status { display: inline-flex; align-items: center; gap: 7px; margin-left: auto; font-size: 13px; color: var(--muted); }
-      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
-      .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-      .dot.err { background: var(--danger); }
-
-      .demods { margin: 14px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
-      .demods h2 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 10px; font-weight: 600; }
-      .demods .group { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
-      .demods .group .gl { color: var(--muted); font-size: 11px; width: 74px; flex: none; align-self: center; }
-      .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
-      .check input { accent-color: var(--accent); }
-
-      .wfreadout {
-        display: flex; align-items: baseline; gap: 24px; margin: 10px 2px 6px;
-        font: 13px var(--mono); color: var(--muted);
-      }
-      .wfreadout .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-      .wfreadout b { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-      .wfreadout .sel b { color: var(--accent); }
-      .wfreadout .cur b { color: var(--text); }
-      .wfwrap {
-        position: relative; width: 100%; height: 340px; margin: 0 0 4px;
-        background: #05060a; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
-      }
-      .wfhint { color: var(--muted); font-size: 12px; margin: 0 2px 14px; }
-
-      .cmd { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 4px 0 14px; }
-      .cmd .cmdhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-      .cmd .cmdhead span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-      .cmd code { display: block; font: 12px/1.6 var(--mono); color: var(--text); white-space: pre-wrap; word-break: break-all; }
-      .cmd code .flag { color: var(--accent); }
-      .cmd code .pipe { color: var(--muted); }
-      .cmd button { padding: 4px 12px; font-size: 12px; }
-      .stats { display: flex; gap: 24px; margin: 14px 2px; color: var(--muted); font-size: 13px; align-items: center; }
-      .stats #clear { margin-left: auto; padding: 5px 12px; font-size: 12px; }
-      .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
-      .meter { width: 120px; height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
-      .meter > i { display: block; height: 100%; width: 0; background: var(--accent); }
-
-      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-      th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 500; }
-      td { font: 13px var(--mono); vertical-align: top; }
-      td.proto { color: var(--accent); white-space: nowrap; }
-      td.msg { color: var(--text); word-break: break-word; }
-      tr.flash { animation: flash .8s ease-out; }
-      @keyframes flash { from { background: var(--accent-dim); } to { background: transparent; } }
-      .empty { color: var(--muted); padding: 40px; text-align: center; }
-      .banner { background: #2a1d10; border: 1px solid #5a3d1a; color: #f0c98a; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
-      #log {
-        margin-top: 20px; max-height: 140px; overflow: auto; font: 11px var(--mono); color: var(--muted);
-        background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; white-space: pre-wrap;
-      }
-    </style>
   </head>
   <body>
     <header>
       <h1>web-rtl-multimon</h1>
-      <span class="sub">
-        tune an RTL-SDR, pick a channel off the waterfall, decode POCSAG / FLEX / AFSK &mdash; powered by
-        <a href="https://github.com/EliasOenal/multimon-ng" target="_blank" rel="noreferrer">multimon-ng</a> in WebAssembly
-      </span>
-      <a class="gh" href="https://github.com/jasiek/web-rtl-multimon" target="_blank" rel="noreferrer">GitHub</a>
+      <p class="subtitle">
+        Tune an RTL-SDR, pick a channel off the waterfall, decode POCSAG / FLEX /
+        AFSK &mdash; powered by
+        <a href="https://github.com/EliasOenal/multimon-ng" target="_blank" rel="noreferrer">multimon-ng</a>
+        in WebAssembly.
+      </p>
     </header>
+
     <main>
       <div id="unsupported" class="banner" hidden></div>
 
-      <div class="controls">
-        <div class="field">
-          <label for="preset">Preset (known pager freqs)</label>
-          <select id="preset"><option value="" selected>Choose…</option></select>
+      <section class="panel" id="control-panel">
+        <div class="row">
+          <button id="pair" type="button" title="Choose your RTL-SDR once; afterwards Start/Stop won't prompt again">
+            Select device
+          </button>
+          <button id="start" type="button" disabled>Start</button>
+          <button id="stop" type="button" disabled>Stop</button>
+          <span id="status" class="status" data-state="idle">Idle</span>
         </div>
-        <div class="field">
-          <label for="freq">Center frequency (MHz)</label>
-          <input id="freq" type="number" value="153.350" step="0.0125" min="24" max="1766" />
-        </div>
-        <div class="field">
-          <label for="rate">Sample rate (span)</label>
-          <select id="rate">
-            <option value="1058400" selected>1.058 MHz</option>
-            <option value="1014300">1.014 MHz</option>
-            <option value="970200">0.970 MHz</option>
-            <option value="1102500">1.102 MHz</option>
-            <option value="264600">0.265 MHz (narrow)</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="gain">Tuner gain</label>
-          <select id="gain">
-            <option value="auto" selected>Auto (AGC)</option>
-            <option value="49.6">49.6 dB (max)</option>
-            <option value="44.5">44.5 dB</option>
-            <option value="40.2">40.2 dB</option>
-            <option value="33.8">33.8 dB</option>
-            <option value="28.0">28.0 dB</option>
-            <option value="22.9">22.9 dB</option>
-            <option value="15.7">15.7 dB</option>
-            <option value="8.7">8.7 dB</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="bw">Channel width (kHz)</label>
-          <!-- Default ≈ audioRate/2 (11.025 kHz): matches rtl_fm -M fm -s 22050's
-               effective FM passband. Narrow it to reject adjacent channels. -->
-          <input id="bw" type="number" value="11" step="0.5" min="2.5" max="20" />
-        </div>
-        <div class="field">
-          <label for="fft">FFT size</label>
-          <select id="fft">
-            <option value="1024">1024</option>
-            <option value="2048" selected>2048</option>
-            <option value="4096">4096</option>
-          </select>
-        </div>
-        <button id="pair" title="Choose your RTL-SDR once; afterwards Start/Stop won't prompt again">Pair device</button>
-        <button id="start" class="secondary" disabled>Start</button>
-        <button id="stop" class="secondary" disabled>Stop</button>
-        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Idle</span></span>
-      </div>
 
-      <div class="demods">
-        <h2>Demodulators</h2>
-        <div class="group"><span class="gl">Pagers</span>
-          <label class="check"><input type="checkbox" value="POCSAG512" checked /> POCSAG512</label>
-          <label class="check"><input type="checkbox" value="POCSAG1200" checked /> POCSAG1200</label>
-          <label class="check"><input type="checkbox" value="POCSAG2400" checked /> POCSAG2400</label>
-          <label class="check"><input type="checkbox" value="FLEX" checked /> FLEX</label>
-          <label class="check"><input type="checkbox" value="FLEX_NEXT" /> FLEX_NEXT</label>
-          <label class="check"><input type="checkbox" value="GSC" /> GSC</label>
+        <div class="row meters-row">
+          <div class="stat">
+            <span class="stat-label">Packets</span>
+            <span class="stat-value" id="count">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Dropped</span>
+            <span class="stat-value" id="overflow">0</span>
+          </div>
+          <div class="stat" title="Estimated RF samples lost before decoding (host not keeping up with the USB stream)">
+            <span class="stat-label">Lost RF</span>
+            <span class="stat-value" id="lostrf">0%</span>
+          </div>
         </div>
-        <div class="group"><span class="gl">Data / ham</span>
-          <label class="check"><input type="checkbox" value="AFSK1200" /> AFSK1200</label>
-          <label class="check"><input type="checkbox" value="AFSK2400" /> AFSK2400</label>
-          <label class="check"><input type="checkbox" value="UFSK1200" /> UFSK1200</label>
-          <label class="check"><input type="checkbox" value="HAPN4800" /> HAPN4800</label>
-          <label class="check"><input type="checkbox" value="FSK9600" /> FSK9600</label>
-          <label class="check"><input type="checkbox" value="FMSFSK" /> FMSFSK</label>
+      </section>
+
+      <section class="panel" id="presets-panel">
+        <h2>Preset</h2>
+        <div class="row fields-row">
+          <div class="field">
+            <label for="preset">Known pager frequencies</label>
+            <select id="preset" disabled>
+              <option value="" selected>Choose…</option>
+            </select>
+          </div>
         </div>
-        <div class="group"><span class="gl">Selcall / tones</span>
-          <label class="check"><input type="checkbox" value="DTMF" /> DTMF</label>
-          <label class="check"><input type="checkbox" value="ZVEI1" /> ZVEI1</label>
-          <label class="check"><input type="checkbox" value="ZVEI2" /> ZVEI2</label>
-          <label class="check"><input type="checkbox" value="CCIR" /> CCIR</label>
-          <label class="check"><input type="checkbox" value="EEA" /> EEA</label>
-          <label class="check"><input type="checkbox" value="EIA" /> EIA</label>
+      </section>
+
+      <section class="panel" id="tuning-panel">
+        <h2>Manual tuning</h2>
+        <div class="row fields-row">
+          <div class="field">
+            <label for="freq">Center frequency (MHz)</label>
+            <input id="freq" type="number" value="153.350" step="0.0125" min="24" max="1766" disabled />
+          </div>
+          <div class="field">
+            <label for="rate">Sample rate (span)</label>
+            <select id="rate" disabled>
+              <option value="1058400" selected>1.058 MHz</option>
+              <option value="1014300">1.014 MHz</option>
+              <option value="970200">0.970 MHz</option>
+              <option value="1102500">1.102 MHz</option>
+              <option value="264600">0.265 MHz (narrow)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="gain">Tuner gain</label>
+            <select id="gain" disabled>
+              <option value="auto" selected>Auto (AGC)</option>
+              <option value="49.6">49.6 dB (max)</option>
+              <option value="44.5">44.5 dB</option>
+              <option value="40.2">40.2 dB</option>
+              <option value="33.8">33.8 dB</option>
+              <option value="28.0">28.0 dB</option>
+              <option value="22.9">22.9 dB</option>
+              <option value="15.7">15.7 dB</option>
+              <option value="8.7">8.7 dB</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="fft" title="Waterfall FFT resolution">FFT size</label>
+            <select id="fft" disabled>
+              <option value="1024">1024</option>
+              <option value="2048" selected>2048</option>
+              <option value="4096">4096</option>
+            </select>
+          </div>
         </div>
-        <div class="group"><span class="gl">Other</span>
-          <label class="check"><input type="checkbox" value="EAS" /> EAS</label>
-          <label class="check"><input type="checkbox" value="MORSE_CW" /> MORSE_CW</label>
-          <label class="check"><input type="checkbox" value="X10" /> X10</label>
-          <label class="check"><input type="checkbox" value="CLIPFSK" /> CLIPFSK</label>
+      </section>
+
+      <section class="panel" id="options-panel">
+        <h2>Demodulators &amp; channel</h2>
+        <div class="row fields-row">
+          <div class="field">
+            <!-- Default ≈ audioRate/2 (11.025 kHz): matches rtl_fm -M fm -s 22050's
+                 effective FM passband. Narrow it to reject adjacent channels. -->
+            <label for="bw">Channel width (kHz)</label>
+            <input id="bw" type="number" value="11" step="0.5" min="2.5" max="20" disabled />
+          </div>
         </div>
-      </div>
-
-      <div class="wfreadout">
-        <span class="sel"><span class="lbl">Selected</span> <b id="selFreq">—</b></span>
-        <span class="cur"><span class="lbl">Cursor</span> <b id="curFreq">—</b></span>
-      </div>
-      <div class="wfwrap" id="wfwrap"></div>
-      <p class="wfhint">Left-click to tune the decode channel (green marker); the band shows the channel width. Scroll to zoom (centered on the cursor), middle-button drag to pan.</p>
-
-      <div class="cmd">
-        <div class="cmdhead">
-          <span>Equivalent native command (rtl_fm &rarr; multimon-ng)</span>
-          <button id="copyCmd" class="secondary">Copy</button>
+        <div class="demods">
+          <div class="group"><span class="gl">Pagers</span>
+            <label class="check"><input type="checkbox" value="POCSAG512" checked /> POCSAG512</label>
+            <label class="check"><input type="checkbox" value="POCSAG1200" checked /> POCSAG1200</label>
+            <label class="check"><input type="checkbox" value="POCSAG2400" checked /> POCSAG2400</label>
+            <label class="check"><input type="checkbox" value="FLEX" checked /> FLEX</label>
+            <label class="check"><input type="checkbox" value="FLEX_NEXT" /> FLEX_NEXT</label>
+            <label class="check"><input type="checkbox" value="GSC" /> GSC</label>
+          </div>
+          <div class="group"><span class="gl">Data / ham</span>
+            <label class="check"><input type="checkbox" value="AFSK1200" /> AFSK1200</label>
+            <label class="check"><input type="checkbox" value="AFSK2400" /> AFSK2400</label>
+            <label class="check"><input type="checkbox" value="UFSK1200" /> UFSK1200</label>
+            <label class="check"><input type="checkbox" value="HAPN4800" /> HAPN4800</label>
+            <label class="check"><input type="checkbox" value="FSK9600" /> FSK9600</label>
+            <label class="check"><input type="checkbox" value="FMSFSK" /> FMSFSK</label>
+          </div>
+          <div class="group"><span class="gl">Selcall / tones</span>
+            <label class="check"><input type="checkbox" value="DTMF" /> DTMF</label>
+            <label class="check"><input type="checkbox" value="ZVEI1" /> ZVEI1</label>
+            <label class="check"><input type="checkbox" value="ZVEI2" /> ZVEI2</label>
+            <label class="check"><input type="checkbox" value="CCIR" /> CCIR</label>
+            <label class="check"><input type="checkbox" value="EEA" /> EEA</label>
+            <label class="check"><input type="checkbox" value="EIA" /> EIA</label>
+          </div>
+          <div class="group"><span class="gl">Other</span>
+            <label class="check"><input type="checkbox" value="EAS" /> EAS</label>
+            <label class="check"><input type="checkbox" value="MORSE_CW" /> MORSE_CW</label>
+            <label class="check"><input type="checkbox" value="X10" /> X10</label>
+            <label class="check"><input type="checkbox" value="CLIPFSK" /> CLIPFSK</label>
+          </div>
         </div>
-        <code id="cmdline"></code>
-      </div>
+      </section>
 
-      <div class="stats">
-        <div>Packets: <b id="count">0</b></div>
-        <div>Dropped: <b id="overflow">0</b></div>
-        <div title="Estimated RF samples lost before decoding (host not keeping up with the USB stream)">Lost RF: <b id="lostrf">0%</b></div>
-        <div>Audio <span class="meter"><i id="meter"></i></span></div>
-        <button id="clear" class="secondary">Clear packets</button>
-      </div>
+      <section class="panel" id="waterfall-panel">
+        <h2>Waterfall</h2>
+        <div class="wfreadout">
+          <span class="sel"><span class="wf-lbl">Selected</span> <b id="selFreq">&mdash;</b></span>
+          <span class="cur"><span class="wf-lbl">Cursor</span> <b id="curFreq">&mdash;</b></span>
+        </div>
+        <div class="wfwrap" id="wfwrap"></div>
+        <p class="wfhint">
+          Left-click to tune the decode channel (green marker); the band shows the
+          channel width. Scroll to zoom (centered on the cursor); middle-button
+          drag to pan.
+        </p>
+      </section>
 
-      <table>
-        <thead>
-          <tr><th style="width:110px">Time</th><th style="width:120px">Protocol</th><th>Message</th></tr>
-        </thead>
-        <tbody id="rows">
-          <tr><td colspan="3" class="empty">No packets yet. Pair an RTL-SDR, press Start, tune to a pager channel, and wait for traffic.</td></tr>
-        </tbody>
-      </table>
+      <section class="panel" id="cmd-panel">
+        <div class="cmd">
+          <div class="cmdhead">
+            <span>Equivalent native command (rtl_fm &rarr; multimon-ng)</span>
+            <button id="copyCmd" class="secondary">Copy</button>
+          </div>
+          <code id="cmdline"></code>
+        </div>
+      </section>
 
-      <div id="log"></div>
+      <section class="panel" id="packets-panel">
+        <div class="panel-header">
+          <h2>Packets</h2>
+          <div class="stats">
+            <span class="meter" title="Audio level"><i id="meter"></i></span>
+            <button id="clear" class="secondary">Clear</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 110px">Time</th>
+                <th style="width: 120px">Protocol</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="rows">
+              <tr class="empty-row">
+                <td colspan="3">
+                  No packets yet. Pair an RTL-SDR, press Start, tune to a pager
+                  channel, and wait for traffic.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="log-panel">
+        <h2>Log</h2>
+        <pre id="log" class="log"></pre>
+      </section>
     </main>
+
+    <footer>
+      <p>
+        Requires a Chromium-based browser (WebUSB + WebAssembly JSPI) and an
+        RTL-SDR dongle on a page served over HTTPS or localhost.
+      </p>
+      <p>
+        <a
+          href="https://github.com/jasiek/web-rtl-multimon"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="gh-link"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"
+            />
+          </svg>
+          View source on GitHub
+        </a>
+      </p>
+    </footer>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

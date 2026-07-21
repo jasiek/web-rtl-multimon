@@ -9,6 +9,7 @@
 // All parameters auto-apply while running: frequency and the waterfall marker
 // retune live; channel width / FFT / demods restart just the decoder; sample
 // rate / gain do a quick transparent stream restart. None re-prompt.
+import "./style.css";
 import { Sdr, type SampleSink } from "./sdr";
 import { Waterfall } from "./waterfall";
 import type { FromWorker, StartParams, ToWorker } from "./worker/protocol";
@@ -25,8 +26,7 @@ const els = {
   pair: $<HTMLButtonElement>("pair"),
   start: $<HTMLButtonElement>("start"),
   stop: $<HTMLButtonElement>("stop"),
-  dot: $<HTMLSpanElement>("dot"),
-  statusText: $<HTMLSpanElement>("statusText"),
+  status: $<HTMLSpanElement>("status"),
   count: $<HTMLElement>("count"),
   lostrf: $<HTMLElement>("lostrf"),
   selFreq: $<HTMLElement>("selFreq"),
@@ -75,6 +75,7 @@ const waterfall = new Waterfall(els.wfwrap);
 let worker: Worker | null = null;
 let paired = false;
 let streaming = false;
+let usbUnsupported = false;
 let pumpRunning = false;
 let pumpPromise: Promise<void> | null = null;
 let offsetHz = 0;
@@ -93,9 +94,18 @@ function checkSupport(): string | null {
 }
 
 // --- helpers -----------------------------------------------------------------
-function setStatus(text: string, state: "idle" | "on" | "err") {
-  els.statusText.textContent = text;
-  els.dot.className = "dot" + (state === "on" ? " on" : state === "err" ? " err" : "");
+// The shared status pill uses data-state; map our transient/on/err states onto
+// its idle/connecting/running/error styling.
+type StatusState = "idle" | "busy" | "on" | "err";
+const STATUS_STATE: Record<StatusState, string> = {
+  idle: "idle",
+  busy: "connecting",
+  on: "running",
+  err: "error",
+};
+function setStatus(text: string, state: StatusState) {
+  els.status.textContent = text;
+  els.status.dataset.state = STATUS_STATE[state];
 }
 
 function logLines(lines: string[]) {
@@ -116,10 +126,23 @@ function debounce<A extends unknown[]>(fn: (...a: A) => void, ms: number): (...a
   };
 }
 
+// Select device stays available (to swap dongles) but is locked mid-stream;
+// Start needs a paired device and no active stream; Stop needs an active stream.
+// The config controls (fields + demod checkboxes) are usable only once paired.
 function updateButtons() {
-  els.pair.disabled = false;
-  els.start.disabled = !paired || streaming;
+  els.pair.disabled = usbUnsupported || streaming;
+  els.start.disabled = usbUnsupported || !paired || streaming;
   els.stop.disabled = !streaming;
+  setFieldsEnabled(!usbUnsupported && paired);
+}
+
+function setFieldsEnabled(enabled: boolean): void {
+  for (const el of [els.preset, els.freq, els.rate, els.gain, els.fft, els.bw]) {
+    el.disabled = !enabled;
+  }
+  document
+    .querySelectorAll<HTMLInputElement>('.demods input[type="checkbox"]')
+    .forEach((c) => (c.disabled = !enabled));
 }
 
 function selectedDemods(): string[] {
@@ -303,7 +326,7 @@ async function pair() {
     return;
   }
   els.pair.disabled = true;
-  setStatus("Pairing…", "idle");
+  setStatus("Pairing…", "busy");
   try {
     await sdr.pair();
     paired = true;
@@ -345,7 +368,7 @@ async function openAndRun() {
     setStatus("Worker error", "err");
     logLine(`worker error: ${e.message}`);
   };
-  setStatus("Loading decoder…", "idle");
+  setStatus("Loading decoder…", "busy");
   post({ type: "start", params: dspParams(actual.sampleRate) });
 
   logLine(
@@ -393,7 +416,7 @@ async function stopStream() {
 // changes. Silent: the dongle stays paired, so no chooser appears.
 async function restartStream() {
   if (!streaming) return;
-  setStatus("Restarting…", "idle");
+  setStatus("Restarting…", "busy");
   await teardown();
   try {
     await openAndRun();
@@ -505,7 +528,7 @@ const support = checkSupport();
 if (support) {
   els.unsupported.hidden = false;
   els.unsupported.textContent = support;
-  els.pair.disabled = true;
+  usbUnsupported = true;
 } else {
   // If a dongle was authorized in a previous session, it's still paired.
   sdr.isPaired().then((yes) => {
