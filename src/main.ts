@@ -28,6 +28,7 @@ const els = {
   dot: $<HTMLSpanElement>("dot"),
   statusText: $<HTMLSpanElement>("statusText"),
   count: $<HTMLElement>("count"),
+  lostrf: $<HTMLElement>("lostrf"),
   selFreq: $<HTMLElement>("selFreq"),
   curFreq: $<HTMLElement>("curFreq"),
   overflow: $<HTMLElement>("overflow"),
@@ -270,12 +271,22 @@ const workerSink: SampleSink = {
   overflows: () => 0,
 };
 
+// Estimated fraction of RF samples lost before decoding (host can't keep up
+// with the USB stream). Green under 1%, amber to 5%, red above — a live proxy
+// for the single-buffered-read starvation that the audio "Dropped" stat misses.
+function updateRfLoss(pct: number) {
+  els.lostrf.textContent = pct < 1 ? `${pct.toFixed(1)}%` : `${pct.toFixed(0)}%`;
+  els.lostrf.style.color = pct >= 5 ? "var(--danger)" : pct >= 1 ? "#e5a54b" : "";
+}
+
 function startPumpOnce() {
   if (pumpRunning) return;
   pumpRunning = true;
   pumpPromise = (async () => {
     await sdr.resetBuffer().catch(() => {});
-    await sdr.pump(workerSink, undefined, (warning) => logLine(warning)).catch((e) => {
+    await sdr
+      .pump(workerSink, undefined, (warning) => logLine(warning), updateRfLoss)
+      .catch((e) => {
       if (streaming) {
         setStatus("USB read failed", "err");
         logLine(`pump stopped: ${e?.message ?? e}`);
@@ -325,6 +336,8 @@ async function openAndRun() {
   // Fresh stream -> fresh drop counter (the worker's SampleQueue is recreated).
   els.overflow.textContent = "0";
   els.overflow.style.color = "";
+  els.lostrf.textContent = "0%";
+  els.lostrf.style.color = "";
 
   worker = new Worker(new URL("./worker/dsp-worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (ev: MessageEvent<FromWorker>) => handleWorkerMessage(ev.data);

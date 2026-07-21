@@ -20,6 +20,9 @@ export interface SdrOptions {
 // balance between USB overhead and latency at 250 kHz.
 const SAMPLES_PER_READ = 16 * 1024;
 
+// Window over which RF-loss (dropped-sample) throughput is averaged, in ms.
+const RF_LOSS_WINDOW_MS = 1000;
+
 // How many back-to-back USB read failures to tolerate before giving up. A
 // handful of transient transferIn errors is normal; sustained failure is not.
 const MAX_CONSECUTIVE_USB_ERRORS = 10;
@@ -36,6 +39,9 @@ export class Sdr {
   // Remembered so we can re-open and re-tune a re-enumerated dongle without a
   // user gesture (only requestDevice() needs one; open()/getDevices() do not).
   private opts: SdrOptions | null = null;
+  // Actual hardware sample rate (setSampleRate rounds the request). Used as the
+  // reference for RF-loss accounting, so rate-rounding isn't mistaken for drops.
+  private actualSampleRate = 0;
 
   /** Optional tap on the raw CU8 stream, used for diagnostic recording. */
   onSamples: ((bytes: Uint8Array) => void) | undefined;
@@ -77,6 +83,7 @@ export class Sdr {
     const centerFrequency = await device.setCenterFrequency(opts.centerFrequency);
     await device.resetBuffer();
     this.device = device;
+    this.actualSampleRate = sampleRate;
     return { sampleRate, centerFrequency };
   }
 
@@ -118,11 +125,21 @@ export class Sdr {
     sink: SampleSink,
     onOverflow?: (count: number) => void,
     onWarn?: (message: string) => void,
+    onRfLoss?: (percent: number) => void,
   ): Promise<void> {
     if (!this.device) throw new Error("SDR not connected");
     this.running = true;
     let lastOverflow = 0;
     let consecutiveErrors = 0;
+    // RF-loss accounting: the ADC runs off a fixed crystal and can only buffer
+    // or drop, so over any interval it produced exactly rate*elapsed samples.
+    // Whatever we receive short of that was dropped upstream of the channelizer
+    // (a device-FIFO overrun in the gap between our single-in-flight transfers),
+    // a loss the audio-queue "Dropped" counter cannot see. We compare received
+    // vs expected over ~1 s windows; the shortfall is the drop rate.
+    let winSamples = 0;
+    let winStart = performance.now();
+    let firstWindow = true; // discard: it includes resetBuffer/start-up latency
     while (this.running) {
       const device = this.device;
       if (!device) throw new Error("SDR not connected");
@@ -161,6 +178,23 @@ export class Sdr {
       if (o !== lastOverflow) {
         lastOverflow = o;
         onOverflow?.(o);
+      }
+
+      // Tally received complex samples (2 bytes each) and, once a window has
+      // elapsed, report the deficit against what the ADC must have produced.
+      winSamples += bytes.length >> 1;
+      const now = performance.now();
+      const winMs = now - winStart;
+      if (winMs >= RF_LOSS_WINDOW_MS) {
+        const expected = (this.actualSampleRate * winMs) / 1000;
+        if (firstWindow) {
+          firstWindow = false; // baseline only; don't report the start-up spike
+        } else if (expected > 0) {
+          const pct = Math.max(0, Math.min(100, (1 - winSamples / expected) * 100));
+          onRfLoss?.(pct);
+        }
+        winSamples = 0;
+        winStart = now;
       }
     }
   }
