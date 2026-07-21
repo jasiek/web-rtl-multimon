@@ -75,6 +75,7 @@ const waterfall = new Waterfall(els.wfwrap);
 let worker: Worker | null = null;
 let paired = false;
 let streaming = false;
+let usbUnsupported = false;
 let pumpRunning = false;
 let pumpPromise: Promise<void> | null = null;
 let offsetHz = 0;
@@ -125,10 +126,23 @@ function debounce<A extends unknown[]>(fn: (...a: A) => void, ms: number): (...a
   };
 }
 
+// Select device stays available (to swap dongles) but is locked mid-stream;
+// Start needs a paired device and no active stream; Stop needs an active stream.
+// The config controls (fields + demod checkboxes) are usable only once paired.
 function updateButtons() {
-  els.pair.disabled = false;
-  els.start.disabled = !paired || streaming;
+  els.pair.disabled = usbUnsupported || streaming;
+  els.start.disabled = usbUnsupported || !paired || streaming;
   els.stop.disabled = !streaming;
+  setFieldsEnabled(!usbUnsupported && paired);
+}
+
+function setFieldsEnabled(enabled: boolean): void {
+  for (const el of [els.preset, els.freq, els.rate, els.gain, els.fft, els.bw]) {
+    el.disabled = !enabled;
+  }
+  document
+    .querySelectorAll<HTMLInputElement>('.demods input[type="checkbox"]')
+    .forEach((c) => (c.disabled = !enabled));
 }
 
 function selectedDemods(): string[] {
@@ -514,7 +528,7 @@ const support = checkSupport();
 if (support) {
   els.unsupported.hidden = false;
   els.unsupported.textContent = support;
-  els.pair.disabled = true;
+  usbUnsupported = true;
 } else {
   // If a dongle was authorized in a previous session, it's still paired.
   sdr.isPaired().then((yes) => {
