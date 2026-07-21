@@ -45,29 +45,66 @@ const els = {
 // multimon-ng's demodulators fix the input rate at 22050 Hz.
 const AUDIO_RATE = 22050;
 
-// Known pager allocations by country (frequency in MHz). Sourced from public
-// pager/scanner references — see README. These are network centers; actual
-// on-air channels vary regionally, so treat them as starting points.
+// Preset frequencies (in MHz) grouped by the multimon-ng protocol they carry.
+// Sourced from public references — see README. Many are network/band *centers*;
+// on-air channels vary regionally, so treat them as starting points and scan
+// nearby. Only protocols with a real, fixed, tunable channel are listed —
+// band-agnostic tone standards (DTMF, CCIR, ZVEI, EEA, EIA), telephone-line
+// CLIPFSK, and inactive GSC have no single frequency to jump to.
 interface Preset {
+  group: string; // <optgroup> the entry appears under (protocol family)
   flag: string;
   country: string;
   mhz: number;
   label: string;
 }
 const PRESETS: Preset[] = [
-  { flag: "🇳🇱", country: "Netherlands", mhz: 169.65, label: "P2000 emergency (FLEX)" },
-  { flag: "🇬🇧", country: "UK", mhz: 153.35, label: "wide-area (POCSAG)" },
-  { flag: "🇬🇧", country: "UK", mhz: 153.25, label: "wide-area (POCSAG)" },
-  { flag: "🇬🇧", country: "UK", mhz: 138.15, label: "PageOne (POCSAG)" },
-  { flag: "🇸🇪", country: "Sweden", mhz: 169.8, label: "Minicall (POCSAG)" },
-  { flag: "🇩🇪", country: "Germany", mhz: 466.075, label: "Cityruf (POCSAG)" },
-  { flag: "🇩🇪", country: "Germany", mhz: 448.425, label: "e*Message/BOS (POCSAG)" },
-  { flag: "🇫🇷", country: "France", mhz: 466.025, label: "Alphapage (POCSAG)" },
-  { flag: "🇪🇺", country: "Europe", mhz: 439.9875, label: "DAPNET amateur (POCSAG)" },
-  { flag: "🇺🇸", country: "USA", mhz: 929.9375, label: "American Messaging (FLEX)" },
-  { flag: "🇺🇸", country: "USA", mhz: 931.0625, label: "FLEX / POCSAG" },
-  { flag: "🇺🇸", country: "USA/Canada", mhz: 931.9375, label: "SkyTel nationwide (FLEX)" },
-  { flag: "🇨🇦", country: "Canada", mhz: 929.2875, label: "PageNet (POCSAG)" },
+  // --- FLEX pagers ---------------------------------------------------------
+  { group: "FLEX pagers", flag: "🇳🇱", country: "Netherlands", mhz: 169.65, label: "P2000 emergency" },
+  { group: "FLEX pagers", flag: "🇺🇸", country: "USA", mhz: 929.9375, label: "American Messaging" },
+  { group: "FLEX pagers", flag: "🇺🇸", country: "USA", mhz: 931.3375, label: "Spok" },
+  { group: "FLEX pagers", flag: "🇺🇸", country: "USA", mhz: 931.0625, label: "FLEX / POCSAG carrier" },
+  { group: "FLEX pagers", flag: "🇺🇸", country: "USA/Canada", mhz: 931.9375, label: "SkyTel nationwide" },
+  // --- POCSAG pagers -------------------------------------------------------
+  { group: "POCSAG pagers", flag: "🇳🇱", country: "Netherlands", mhz: 172.45, label: "KPN public" },
+  { group: "POCSAG pagers", flag: "🇬🇧", country: "UK", mhz: 153.35, label: "wide-area" },
+  { group: "POCSAG pagers", flag: "🇬🇧", country: "UK", mhz: 153.25, label: "wide-area" },
+  { group: "POCSAG pagers", flag: "🇬🇧", country: "UK", mhz: 138.15, label: "PageOne" },
+  { group: "POCSAG pagers", flag: "🇸🇪", country: "Sweden", mhz: 169.8, label: "Minicall" },
+  { group: "POCSAG pagers", flag: "🇩🇪", country: "Germany", mhz: 465.97, label: "e*Message / Cityruf" },
+  { group: "POCSAG pagers", flag: "🇩🇪", country: "Germany", mhz: 466.075, label: "e*Message / Cityruf" },
+  { group: "POCSAG pagers", flag: "🇩🇪", country: "Germany", mhz: 466.23, label: "e*Message / Cityruf" },
+  { group: "POCSAG pagers", flag: "🇩🇪", country: "Germany", mhz: 448.425, label: "e*Message / BOS" },
+  { group: "POCSAG pagers", flag: "🇫🇷", country: "France", mhz: 466.025, label: "Alphapage" },
+  { group: "POCSAG pagers", flag: "🇫🇷", country: "France", mhz: 466.175, label: "Alphapage" },
+  { group: "POCSAG pagers", flag: "🇪🇺", country: "Europe", mhz: 439.9875, label: "DAPNET amateur" },
+  { group: "POCSAG pagers", flag: "🇨🇦", country: "Canada", mhz: 929.2875, label: "PageNet" },
+  // --- APRS / packet (AFSK1200 = AX.25) ------------------------------------
+  { group: "APRS / packet (AFSK1200)", flag: "🇺🇸", country: "North America", mhz: 144.39, label: "APRS primary" },
+  { group: "APRS / packet (AFSK1200)", flag: "🇪🇺", country: "Europe / UK", mhz: 144.8, label: "APRS primary" },
+  { group: "APRS / packet (AFSK1200)", flag: "🇯🇵", country: "Japan", mhz: 144.66, label: "APRS primary" },
+  { group: "APRS / packet (AFSK1200)", flag: "🇦🇺", country: "Australia", mhz: 145.175, label: "APRS primary" },
+  { group: "APRS / packet (AFSK1200)", flag: "🇳🇿", country: "New Zealand", mhz: 144.575, label: "APRS primary" },
+  { group: "APRS / packet (AFSK1200)", flag: "🇧🇷", country: "Brazil", mhz: 145.57, label: "APRS primary" },
+  { group: "APRS / packet (AFSK1200)", flag: "🛰️", country: "ISS (worldwide)", mhz: 145.825, label: "ARISS digipeater" },
+  // --- 9600-baud packet (FSK9600) ------------------------------------------
+  { group: "Packet 9k6 (FSK9600)", flag: "🇯🇵", country: "Japan", mhz: 144.64, label: "APRS 9k6 GMSK" },
+  // --- German BOS 4m band (FMSFSK status telegrams / ZVEI tone-out) ---------
+  { group: "German BOS 4m (FMSFSK)", flag: "🇩🇪", country: "Germany", mhz: 84.015, label: "4m Oberband ch.347 (FMS/ZVEI)" },
+  { group: "German BOS 4m (FMSFSK)", flag: "🇩🇪", country: "Germany", mhz: 85.095, label: "4m Oberband ch.401 (FMS/ZVEI)" },
+  // --- NOAA Weather Radio (EAS / SAME) — 7 standard US channels -------------
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.4, label: "NOAA Weather Radio" },
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.425, label: "NOAA Weather Radio" },
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.45, label: "NOAA Weather Radio" },
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.475, label: "NOAA Weather Radio" },
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.5, label: "NOAA Weather Radio" },
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.525, label: "NOAA Weather Radio" },
+  { group: "Weather radio (EAS / SAME)", flag: "🇺🇸", country: "USA", mhz: 162.55, label: "NOAA Weather Radio" },
+  // --- X10 home-automation RF ----------------------------------------------
+  { group: "Home automation (X10)", flag: "🇺🇸", country: "North America", mhz: 310.0, label: "X10 RF remotes" },
+  { group: "Home automation (X10)", flag: "🇪🇺", country: "Europe", mhz: 433.92, label: "X10 RF remotes" },
+  // --- CW beacons (MORSE_CW) -----------------------------------------------
+  { group: "Beacons (MORSE_CW)", flag: "🌍", country: "Worldwide", mhz: 28.2, label: "NCDXF/IARU beacon" },
 ];
 
 const sdr = new Sdr();
@@ -455,11 +492,17 @@ const onFreqChange = debounce(applyFrequency, 200);
 // Populate the preset dropdown and apply a chosen preset as the new center
 // frequency (offset reset to 0 so the decoded channel is exactly the preset).
 function populatePresets() {
+  let group: HTMLOptGroupElement | null = null;
   for (const p of PRESETS) {
+    if (!group || group.label !== p.group) {
+      group = document.createElement("optgroup");
+      group.label = p.group;
+      els.preset.appendChild(group);
+    }
     const opt = document.createElement("option");
     opt.value = String(p.mhz);
     opt.textContent = `${p.flag} ${p.mhz.toFixed(4)} MHz · ${p.country} ${p.label}`;
-    els.preset.appendChild(opt);
+    group.appendChild(opt);
   }
 }
 

@@ -81,26 +81,43 @@ stream restart. **Stop** releases the dongle (it stays paired for next time).
 
 ### Where to listen
 
-The **Preset** dropdown lists known pager allocations by country (flag +
-frequency), so you can jump straight to an active network. They're network
-*centers* — regional channels vary, so treat them as starting points and scan
-nearby. Highlights:
+The **Presets** dropdown groups known allocations by the multimon-ng protocol
+that rides on them (flag + frequency + country), so you can jump straight to an
+active channel. Many are network/band *centers* — regional channels vary, so
+treat them as starting points and scan nearby. Highlights:
 
-- 🇳🇱 **169.650 MHz** — P2000, the unencrypted nationwide emergency-services
-  network (FLEX); the classic thing to watch.
-- 🇬🇧 **153.35 / 153.25 / 138.15 MHz** — UK wide-area POCSAG.
-- 🇸🇪 **169.800 MHz** — Minicall (POCSAG).
-- 🇩🇪 **466.075 / 448.425 MHz** — Cityruf / e*Message (POCSAG).
-- 🇫🇷 **466.025 MHz** — Alphapage (POCSAG).
-- 🇪🇺 **439.9875 MHz** — DAPNET amateur paging (POCSAG), used across Europe.
-- 🇺🇸🇨🇦 **929–932 MHz** — North American FLEX/POCSAG (e.g. 931.9375 MHz SkyTel;
-  929.2875 MHz PageNet in Canada).
+- **FLEX pagers** — 🇳🇱 **169.650 MHz** P2000, the unencrypted nationwide
+  emergency-services network (the classic thing to watch); 🇺🇸🇨🇦 **929–932 MHz**
+  North American networks (SkyTel, American Messaging, Spok).
+- **POCSAG pagers** — 🇬🇧 **153.35 / 153.25 / 138.15 MHz** UK wide-area;
+  🇸🇪 **169.800 MHz** Minicall; 🇩🇪 **465.97 / 466.075 / 466.23 MHz** e\*Message /
+  Cityruf; 🇫🇷 **466.025 MHz** Alphapage; 🇪🇺 **439.9875 MHz** DAPNET amateur
+  paging, used across Europe.
+- **APRS / packet (AFSK1200)** — 🇺🇸 **144.390 MHz** (North America),
+  🇪🇺 **144.800 MHz** (Europe/UK), plus Japan / Australia / NZ / Brazil channels,
+  and 🛰️ **145.825 MHz** the ISS (ARISS) digipeater — audible during a pass.
+- **Packet 9k6 (FSK9600)** — 🇯🇵 **144.640 MHz** Japanese APRS GMSK.
+- **German BOS 4m (FMSFSK)** — 🇩🇪 **84.015 / 85.095 MHz** Oberband voice
+  channels carrying FMS status telegrams (and ZVEI five-tone alerting).
+- **Weather radio (EAS / SAME)** — 🇺🇸 **162.400–162.550 MHz**, the seven NOAA
+  Weather Radio channels that broadcast SAME/EAS alert headers.
+- **Home automation (X10)** — 🇺🇸 **310.000 MHz** / 🇪🇺 **433.920 MHz** RF remotes.
+- **CW beacons (MORSE_CW)** — 🌍 **28.200 MHz** NCDXF/IARU beacon slot.
 
-The default channel width (7.5 kHz) suits narrowband FM pagers; widen it for
-signals that occupy more spectrum. Sources for the presets: the
-[POCSAG](https://www.sigidwiki.com/wiki/POCSAG)/[FLEX](https://www.sigidwiki.com/wiki/FLEX)
-pages on SigidWiki, [P2000 (Wikipedia)](https://en.wikipedia.org/wiki/P2000_(network)),
-[DAPNET (Wikipedia)](https://en.wikipedia.org/wiki/DAPNET), and Canada's
+Band-agnostic tone standards (DTMF, CCIR, ZVEI1/2, EEA, EIA), telephone-line
+CLIPFSK, and the inactive GSC pager code have no single frequency to jump to, so
+they aren't presets — enable the demodulator and tune manually.
+
+The default channel width suits narrowband FM signals; widen it for wider ones
+(e.g. 9k6 packet) and narrow it to reject adjacent channels. Sources for the
+presets: the [POCSAG](https://www.sigidwiki.com/wiki/POCSAG) /
+[FLEX](https://www.sigidwiki.com/wiki/FLEX) pages on SigidWiki,
+[P2000 (Wikipedia)](https://en.wikipedia.org/wiki/P2000_(network)),
+[DAPNET (Wikipedia)](https://en.wikipedia.org/wiki/DAPNET),
+[APRS frequencies (Wikipedia)](https://en.wikipedia.org/wiki/Automatic_Packet_Reporting_System),
+the [ARISS](https://www.ariss.org/) packet downlink, Germany's
+[4-Meter-Band (Wikipedia.de)](https://de.wikipedia.org/wiki/4-Meter-Band),
+[NOAA Weather Radio station listings](https://www.weather.gov/nwr/), and Canada's
 [ISED paging band 929–932 MHz](https://ised-isde.canada.ca/site/spectrum-management-telecommunications/en/official-publications/legislation-regulations-and-treaties/terrestrial-radiocom-agreements-and-arrangements-traa/paging-operations-band-929-932-mhz).
 
 ## Deploy to GitHub Pages
