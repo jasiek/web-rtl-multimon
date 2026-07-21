@@ -238,6 +238,11 @@ function handleWorkerMessage(msg: FromWorker) {
       break;
     case "audioLevel":
       els.meter.style.width = `${Math.min(100, msg.rms * 140).toFixed(0)}%`;
+      // Dropped audio chunks: multimon-ng fell behind and the queue shed its
+      // oldest samples, so some airtime was never decoded. Flag it in red when
+      // it happens — otherwise the loss is invisible and looks like dead air.
+      els.overflow.textContent = String(msg.overflows);
+      els.overflow.style.color = msg.overflows > 0 ? "var(--danger)" : "";
       break;
     case "packet":
       addPacket(msg.packet.protocol, msg.packet.text, msg.packet.time);
@@ -316,6 +321,10 @@ async function openAndRun() {
   waterfall.setBandwidth(bandwidthHz());
   waterfall.setOffset(offsetHz);
   updateChannelReadout();
+
+  // Fresh stream -> fresh drop counter (the worker's SampleQueue is recreated).
+  els.overflow.textContent = "0";
+  els.overflow.style.color = "";
 
   worker = new Worker(new URL("./worker/dsp-worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (ev: MessageEvent<FromWorker>) => handleWorkerMessage(ev.data);

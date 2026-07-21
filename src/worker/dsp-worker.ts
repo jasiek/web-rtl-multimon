@@ -97,7 +97,10 @@ function onSamples(data: ArrayBuffer): void {
   const t = nowMs();
   if (t - lastLevelPost >= LEVEL_INTERVAL_MS) {
     lastLevelPost = t;
-    post({ type: "audioLevel", rms: channelizer.takeRms() });
+    // overflows: cumulative audio chunks dropped because multimon-ng fell behind
+    // the live stream (queue over cap). Surfaced so the user can tell when the
+    // browser is silently losing audio — which lowers the decode count.
+    post({ type: "audioLevel", rms: channelizer.takeRms(), overflows: queue.overflows() });
   }
 }
 

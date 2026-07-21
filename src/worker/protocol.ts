@@ -42,7 +42,7 @@ export interface Packet {
 export type FromWorker =
   | { type: "ready" }
   | { type: "waterfall"; mags: Float32Array; sampleRate: number }
-  | { type: "audioLevel"; rms: number }
+  | { type: "audioLevel"; rms: number; overflows: number }
   | { type: "packet"; packet: Packet }
   | { type: "log"; line: string }
   | { type: "error"; message: string }
