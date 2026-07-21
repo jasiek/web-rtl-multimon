@@ -156,11 +156,15 @@ export class Channelizer {
     const s2taps = lowpassTaps(channelBW, interRate, tapsForTransition(s2trans, interRate));
     this.stage2 = new DecimatingFir(s2taps, d2);
 
-    // Discriminator gain: map the expected peak deviation (~ half the channel
-    // bandwidth) to roughly full scale. dphase peaks at 2π·dev/audioRate.
-    const audioRate = p.audioRate;
-    const peakDev = p.channelBandwidthHz * 0.6;
-    this.gain = audioRate / (2 * Math.PI * peakDev);
+    // Discriminator scaling matched to rtl_fm's `-M fm`, so the audio level fed
+    // to multimon-ng is the same as the printed native pipeline. rtl_fm emits
+    // atan2(...)·(1<<14)/π as int16 — a full ±π rad/sample phase step maps to
+    // half of int16 full scale, independent of the channel width. We hold audio
+    // in [-1, 1] before the ×32767 quantize, so the equivalent factor is 0.5/π.
+    // Deliberately NOT tied to channelBandwidthHz: coupling the gain to the
+    // bandwidth slider (as it was before) made the level — and thus what the
+    // slicer sees — diverge from rtl_fm and shift the decode count.
+    this.gain = 0.5 / Math.PI;
 
     this.dco = Math.cos((-2 * Math.PI * p.offsetHz) / p.sampleRate);
     this.dsi = Math.sin((-2 * Math.PI * p.offsetHz) / p.sampleRate);
