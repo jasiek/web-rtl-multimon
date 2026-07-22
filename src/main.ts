@@ -10,6 +10,7 @@
 // retune live; channel width / FFT / demods restart just the decoder; sample
 // rate / gain do a quick transparent stream restart. None re-prompt.
 import "./style.css";
+import { track } from "./analytics";
 import { Sdr, type SampleSink } from "./sdr";
 import { Waterfall } from "./waterfall";
 import type { FromWorker, StartParams, ToWorker } from "./worker/protocol";
@@ -118,6 +119,11 @@ let pumpPromise: Promise<void> | null = null;
 let offsetHz = 0;
 let packetCount = 0;
 let active: { centerFrequency: number; sampleRate: number } | null = null;
+
+// --- analytics stream bookkeeping (per Start→Stop cycle) ---------------------
+let streamStartedAt = 0; // performance.now() at Start; 0 when not streaming
+let streamPacketBase = 0; // packetCount when the stream started
+const protocolsSeen = new Set<string>(); // protocols already reported this stream
 
 // --- environment checks ------------------------------------------------------
 function checkSupport(): string | null {
@@ -264,6 +270,16 @@ function addPacket(protocol: string, text: string, timeMs: number) {
   while (els.rows.children.length > 300) els.rows.lastElementChild?.remove();
   packetCount++;
   els.count.textContent = String(packetCount);
+  // Report the first decode of each protocol per stream: which decoders
+  // actually produce output, and the time-to-first-decode, without sending an
+  // event per packet (busy pager channels would blow GA's event quota).
+  if (streamStartedAt && !protocolsSeen.has(protocol)) {
+    protocolsSeen.add(protocol);
+    track("first_decode", {
+      protocol,
+      seconds_to_first: Math.round((performance.now() - streamStartedAt) / 1000),
+    });
+  }
 }
 
 const EMPTY_ROW =
@@ -314,6 +330,7 @@ function handleWorkerMessage(msg: FromWorker) {
     case "error":
       setStatus("Decoder error", "err");
       logLine(`error: ${msg.message}`);
+      track("app_error", { context: "decoder", message: msg.message });
       break;
     case "exit":
       logLine(`decoder: ${msg.message}`);
@@ -350,6 +367,7 @@ function startPumpOnce() {
       if (streaming) {
         setStatus("USB read failed", "err");
         logLine(`pump stopped: ${e?.message ?? e}`);
+        track("app_error", { context: "usb_pump", message: String(e?.message ?? e) });
       }
     });
   })();
@@ -368,9 +386,11 @@ async function pair() {
     await sdr.pair();
     paired = true;
     setStatus("Paired — press Start", "idle");
+    track("pair_success");
   } catch (e: any) {
     setStatus("Pairing cancelled", "idle");
     logLine(`pair: ${e?.message ?? e}`);
+    track("pair_cancelled", { message: String(e?.message ?? e) });
   }
   updateButtons();
 }
@@ -384,6 +404,7 @@ async function openAndRun() {
   } catch (e: any) {
     setStatus("Start failed", "err");
     logLine(`start error: ${e?.message ?? e}`);
+    track("app_error", { context: "start", message: String(e?.message ?? e) });
     throw e;
   }
   active = actual;
@@ -404,6 +425,7 @@ async function openAndRun() {
   worker.onerror = (e) => {
     setStatus("Worker error", "err");
     logLine(`worker error: ${e.message}`);
+    track("app_error", { context: "worker", message: e.message });
   };
   setStatus("Loading decoder…", "busy");
   post({ type: "start", params: dspParams(actual.sampleRate) });
@@ -432,16 +454,40 @@ async function startStream() {
   streaming = true;
   try {
     await openAndRun();
+    streamStartedAt = performance.now();
+    streamPacketBase = packetCount;
+    protocolsSeen.clear();
+    track("stream_start", {
+      frequency_mhz: (selectedHz() / 1e6).toFixed(4),
+      sample_rate: active!.sampleRate,
+      gain: els.gain.value, // "auto" or a dB figure
+      bandwidth_khz: Math.round(bandwidthHz() / 1000),
+      demods: selectedDemods().join(",") || "(none)",
+    });
   } catch {
     streaming = false;
   }
   updateButtons();
 }
 
+// Fires at most once per stream: on Stop, or on tab close mid-stream (gtag
+// delivers via sendBeacon, which survives pagehide).
+function trackStreamStop() {
+  if (!streamStartedAt) return;
+  track("stream_stop", {
+    duration_seconds: Math.round((performance.now() - streamStartedAt) / 1000),
+    packets_decoded: packetCount - streamPacketBase,
+    protocols_decoded: protocolsSeen.size,
+  });
+  streamStartedAt = 0;
+}
+window.addEventListener("pagehide", trackStreamStop);
+
 async function stopStream() {
   if (!streaming) return;
   streaming = false;
   els.stop.disabled = true;
+  trackStreamStop();
   await teardown();
   updateChannelReadout();
   els.meter.style.width = "0";
@@ -516,6 +562,12 @@ function onPresetChange() {
   if (streaming) post({ type: "tune", offsetHz: 0 });
   applyFrequency();
   logLine(`preset: ${v} MHz`);
+  const p = PRESETS.find((p) => String(p.mhz) === v);
+  track("preset_selected", {
+    preset_mhz: v,
+    preset_group: p?.group,
+    preset_label: p ? `${p.country} ${p.label}` : undefined,
+  });
 }
 
 const onBandwidthChange = debounce(() => {
@@ -556,6 +608,7 @@ els.gain.addEventListener("change", () => {
 els.copyCmd.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(buildCommand().plain);
+    track("copy_command");
     const prev = els.copyCmd.textContent;
     els.copyCmd.textContent = "Copied";
     setTimeout(() => (els.copyCmd.textContent = prev), 1200);
@@ -572,6 +625,11 @@ if (support) {
   els.unsupported.hidden = false;
   els.unsupported.textContent = support;
   usbUnsupported = true;
+  // Which capability gate visitors bounce off: no WebUSB (Firefox/Safari) vs
+  // Chromium too old for JSPI.
+  track("unsupported_browser", {
+    reason: "usb" in navigator ? "no_jspi" : "no_webusb",
+  });
 } else {
   // If a dongle was authorized in a previous session, it's still paired.
   sdr.isPaired().then((yes) => {
